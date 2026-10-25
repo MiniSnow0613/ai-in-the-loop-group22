@@ -1,6 +1,6 @@
 # Ai-in-the-loop in Software Project Cycle (group22)
 
-## TOPIC - AI-Assisted Experiment Coordination for GPU-Constrained Simulation-Based ML Research
+## TOPIC - Collaborative Experiment Orchestration for Resource-Constrained AI Research Teams
 Keep experiments connected, GPU usage visible, and teammates on the same page—even when everyone is working with their own AI coding agent.
 
 ## The Problem
@@ -18,8 +18,11 @@ We are building a tool to make these dependencies and handoffs explicit, rather 
 
 ## Project Documents
 - [Contributors](CONTRIBUTORS.md)
-- [Evaluation Plan](.github/‎EVALUATION_PLAN.md)
-- [Decisions Log](.github/DECISIONS.md)
-- [AI Usage Guidelines](.github/AI_USAGE_GUIDELINES.md)
+- [AI Usage Guidelines](docs\‎AI_USAGE_GUIDELINES.md)
+- [Decisions Log](docs/DECISIONS.md)
+- [Evaluation Plan](docs/‎EVALUATION_PLAN.md)
+- [Project Checkpoint 1](docs\Group22_CP1.pdf)
+
+
 
 

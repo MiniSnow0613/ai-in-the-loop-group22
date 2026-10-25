@@ -4,7 +4,7 @@
 
 ### 1. Who specifically has the collaboration problem?
 
-Our primary users are small research and software development teams (2–5 members) who use ai-agent to work on GPU-intensive projects, such as machine learning, computer graphics, and scientific computing in a shared codebase and with limited computational resources.
+Our primary users are small research and software development teams (3-4 members) who use ai-agent to work on GPU-intensive projects, such as machine learning, computer graphics, and scientific computing in a shared codebase and with limited computational resources.
 
 ### 2. What do they currently do instead of our tool?
 
@@ -39,13 +39,13 @@ Our metrics includes
 
 ### Target Users
 
-We will recruit at least two external research or development teams, each containing 2–3 members, and aim for three teams if possible.
+We will recruit at least one external research or development teams, each containing 2–3 members, and aim for two teams if possible.
 
 Potential participants include graduate students from our labs or students taking ML related courses and need to conduct model experiments in their final project.
 
 ### Method
 
-We will conduct a **within-team crossover study** with at least two external research teams, each consisting of 2–3 members. Each team will complete two comparable robot policy experiment coordination scenarios: one using its existing workflow (e.g., Git, messaging apps, and manual GPU checks) and one using our tool. The order of conditions will be counterbalanced across teams to reduce learning and order effects.
+We will conduct a **within-team crossover study** with at least two external research teams, each consisting of 3-4 members. Each team will complete two comparable robot policy experiment coordination scenarios: one using its existing workflow (e.g., Git, messaging apps, and manual GPU checks) and one using our tool. The order of conditions will be counterbalanced across teams to reduce learning and order effects.
 
 The scenarios will represent realistic collaborative ML workflows involving simulator-based data collection, policy training, checkpoint evaluation, experiment configuration changes, and shared GPU constraints.
 
