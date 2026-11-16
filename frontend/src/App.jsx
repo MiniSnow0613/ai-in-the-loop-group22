@@ -349,7 +349,13 @@ export default function App() {
         />
       </main>
 
-      <ChatPanel />
+      <ChatPanel
+        onTasksAdded={(newBoard, createdIds) => {
+          setBoard(newBoard);
+          setError("");
+          if (createdIds.length > 0) locateTask(createdIds[0]);
+        }}
+      />
 
       {selectedTask && (
         <TaskDetail

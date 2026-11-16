@@ -4,10 +4,14 @@ Run:  python app.py   (serves the API, and the built frontend if frontend/dist e
 """
 import os
 import sqlite3
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Flask, abort, g, jsonify, request, send_from_directory
+
+import ai_suggest
+from ai_suggest import AiSuggester, SuggestionError
 
 BASE_DIR = Path(__file__).resolve().parent
 FRONTEND_DIST = BASE_DIR.parent / "frontend" / "dist"
@@ -248,9 +252,41 @@ def titles(rows):
     return ", ".join(f"“{r['title']}”" for r in rows)
 
 
-def create_app(db_path=None):
+def suggestion_preview(tasks, existing_titles):
+    """Candidate tasks plus what the browser needs to show who depends on whom."""
+    batch = {t["id"]: t for t in tasks}
+    unlocks = {t["id"]: [] for t in tasks}
+    for t in tasks:
+        for p in t["prerequisites"]:
+            if p in unlocks:
+                unlocks[p].append(t["id"])
+
+    def ref(pid):
+        if pid in batch:
+            return {"id": pid, "kind": "new", "title": batch[pid]["title"]}
+        if pid in existing_titles:
+            return {"id": pid, "kind": "existing", "title": existing_titles[pid]}
+        return {"id": pid, "kind": "unknown", "title": None}
+
+    return [
+        {**t, "prerequisiteRefs": [ref(p) for p in t["prerequisites"]], "unlocks": unlocks[t["id"]]}
+        for t in tasks
+    ]
+
+
+def new_task_id(taken):
+    while True:
+        tid = f"ai-{uuid.uuid4().hex[:8]}"
+        if tid not in taken:
+            taken.add(tid)
+            return tid
+
+
+def create_app(db_path=None, suggester=None):
     app = Flask(__name__, static_folder=None)
     app.config["DB_PATH"] = str(db_path or os.environ.get("BOARD_DB_PATH") or DEFAULT_DB_PATH)
+    # Tests pass a fake suggester; the real one calls the provider set by AI_PROVIDER.
+    app.config["SUGGESTER"] = suggester or AiSuggester()
     init_db(app.config["DB_PATH"])
 
     def db():
@@ -321,6 +357,100 @@ def create_app(db_path=None):
         db().execute(f"UPDATE tasks SET {cols} WHERE id = ?", (*updates.values(), task_id))
         db().commit()
         return jsonify(build_board(db()))
+
+    # ---------- AI task suggestions (OpenRouter or Groq, see AI_PROVIDER) ----------
+
+    def existing_titles():
+        return {r["id"]: r["title"] for r in db().execute("SELECT id, title FROM tasks")}
+
+    @app.get("/api/ai/status")
+    def ai_status():
+        """Provider, model and whether its key is set. Never returns the key."""
+        return jsonify(app.config["SUGGESTER"].status())
+
+    @app.post("/api/suggestions")
+    def suggest_tasks():
+        """Ask the model for candidate tasks. Read-only: nothing is saved."""
+        body = request.get_json(silent=True) or {}
+        description = body.get("description")
+        if not isinstance(description, str) or not description.strip():
+            return jsonify(error="Describe the work you want to plan first.", code="empty_input"), 400
+        description = description.strip()
+        if len(description) > ai_suggest.MAX_INPUT:
+            return (
+                jsonify(error=f"The description is too long (max {ai_suggest.MAX_INPUT} characters).", code="too_long"),
+                400,
+            )
+        board_tasks = [
+            dict(r) for r in db().execute("SELECT id, title, status FROM tasks ORDER BY position, id")
+        ]
+        try:
+            tasks = app.config["SUGGESTER"].suggest(description, board_tasks)
+        except SuggestionError as e:
+            return jsonify(e.to_json()), e.http_status
+        titles_by_id = {t["id"]: t["title"] for t in board_tasks}
+        return jsonify(
+            provider=app.config["SUGGESTER"].provider_name,
+            model=app.config["SUGGESTER"].model,
+            tasks=suggestion_preview(tasks, titles_by_id),
+            issues=ai_suggest.validate_batch(tasks, titles_by_id),
+        )
+
+    @app.post("/api/suggestions/accept")
+    def accept_suggestions():
+        """Validate the previewed batch and save tasks + dependencies together."""
+        body = request.get_json(silent=True) or {}
+
+        def invalid(reason):
+            return SuggestionError("invalid_batch", f"The task list is invalid: {reason}.", 400)
+
+        try:
+            tasks = ai_suggest.normalize_tasks(body.get("tasks"), error=invalid)
+        except SuggestionError as e:
+            return jsonify(e.to_json()), e.http_status
+
+        conn = db()
+        titles_by_id = existing_titles()
+        problems = ai_suggest.validate_batch(tasks, titles_by_id)
+        if problems:
+            return (
+                jsonify(
+                    error="Nothing was added. " + " ".join(problems),
+                    code="invalid_dependencies",
+                    problems=problems,
+                ),
+                422,
+            )
+
+        taken = set(titles_by_id)
+        id_map = {t["id"]: new_task_id(taken) for t in tasks}
+        start = conn.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM tasks").fetchone()[0]
+        ts = now_iso()
+        try:
+            conn.executemany(
+                """INSERT INTO tasks
+                   (id, title, is_example, assignee_id, status, waiting_text,
+                    position, updated_at, description, summary)
+                   VALUES (?, ?, 0, NULL, 'todo', NULL, ?, ?, ?, NULL)""",
+                [
+                    (id_map[t["id"]], t["title"], start + i, ts, t["description"] or None)
+                    for i, t in enumerate(tasks)
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO task_dependencies (task_id, prerequisite_id) VALUES (?, ?)",
+                [
+                    (id_map[t["id"]], id_map.get(p, p))
+                    for t in tasks
+                    for p in t["prerequisites"]
+                ],
+            )
+            conn.commit()
+        except sqlite3.Error as e:
+            conn.rollback()
+            return jsonify(error=f"Nothing was added: the database rejected the tasks ({e}).", code="db_error"), 500
+
+        return jsonify(board=build_board(conn), createdIds=[id_map[t["id"]] for t in tasks], idMap=id_map)
 
     # Serve the built React app (npm run build) so one URL is enough.
     @app.get("/", defaults={"path": ""})
