@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { bookingKind, formatRange, KIND_LABEL } from "./gpuState.js";
 import { stateKind } from "./taskState.js";
 
 const GAP = 8;
@@ -55,6 +56,59 @@ function RelatedSection({ title, items, empty, tasksById, statusLabel, onLocate 
   );
 }
 
+/** The task's GPU booking, with a way into the GPU schedule tab. */
+function GpuSection({ task, onOpenGpu, onSetNeedsGpu }) {
+  const b = task.gpuBooking;
+  const isDone = task.status === "done";
+  const canBookAgain = !isDone && task.needsGpu && (!b || b.status === "done");
+  let body;
+  if (b) {
+    const kind = bookingKind(b);
+    body = (
+      <>
+        <p className={`gpu-band ${kind} inline`}>
+          {b.gpuName} · {formatRange(b.startAt, b.endAt)}
+        </p>
+        <p className="muted">{KIND_LABEL[kind]}</p>
+      </>
+    );
+  } else if (task.needsGpu && !isDone) {
+    body = <p className="muted">Needs a GPU. Not booked yet.</p>;
+  } else {
+    body = <p className="muted">{isDone ? "No GPU booking." : "No GPU needed."}</p>;
+  }
+  return (
+    <section className="related-section gpu-section">
+      <h4>GPU</h4>
+      {body}
+      {!isDone && (
+        <div className="gpu-actions">
+          {b && (
+            <button type="button" className="btn" onClick={() => onOpenGpu({ bookingId: b.id })}>
+              View in GPU schedule
+            </button>
+          )}
+          {canBookAgain && (
+            <button type="button" className="btn" onClick={() => onOpenGpu({ bookTaskId: task.id })}>
+              Book a GPU
+            </button>
+          )}
+          {!b && !task.needsGpu && (
+            <button type="button" className="btn" onClick={() => onSetNeedsGpu(task, true)}>
+              Needs a GPU
+            </button>
+          )}
+          {!b && task.needsGpu && (
+            <button type="button" className="btn" onClick={() => onSetNeedsGpu(task, false)}>
+              No GPU needed
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 /** Popover next to the clicked card: description, prerequisites, affected tasks. */
 export default function TaskDetail({
   task,
@@ -64,6 +118,8 @@ export default function TaskDetail({
   onToggleDone,
   onLocate,
   onClose,
+  onOpenGpu,
+  onSetNeedsGpu,
 }) {
   const ref = useRef(null);
   const [pos, setPos] = useState({ left: -9999, top: -9999 });
@@ -167,6 +223,7 @@ export default function TaskDetail({
         statusLabel={(item, t) => t?.stateText ?? (item.status === "done" ? "Completed" : "Not completed")}
         onLocate={onLocate}
       />
+      <GpuSection task={task} onOpenGpu={onOpenGpu} onSetNeedsGpu={onSetNeedsGpu} />
 
       <button
         type="button"

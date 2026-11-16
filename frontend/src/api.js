@@ -53,3 +53,39 @@ export function requestSuggestions(description) {
 export function acceptSuggestions(tasks) {
   return request("/api/suggestions/accept", json("POST", { tasks }));
 }
+
+// ---------- GPU schedule ----------
+// Writes return { schedule, board, ... } so both the GPU tab and the cards refresh.
+
+export function fetchGpuSchedule() {
+  return request("/api/gpus");
+}
+
+export function createGpu(gpu) {
+  return request("/api/gpus", json("POST", gpu));
+}
+
+export function updateGpu(gpuId, changes) {
+  return request(`/api/gpus/${encodeURIComponent(gpuId)}`, json("PATCH", changes));
+}
+
+export function deleteGpu(gpuId) {
+  return request(`/api/gpus/${encodeURIComponent(gpuId)}`, { method: "DELETE" });
+}
+
+/** Add the GPUs nvidia-smi finds on the machine running the server. */
+export function detectGpus() {
+  return request("/api/gpus/detect", { method: "POST" });
+}
+
+export function createBooking(booking) {
+  return request("/api/gpu-bookings", json("POST", booking));
+}
+
+export function updateBooking(bookingId, changes) {
+  return request(`/api/gpu-bookings/${encodeURIComponent(bookingId)}`, json("PATCH", changes));
+}
+
+export function deleteBooking(bookingId) {
+  return request(`/api/gpu-bookings/${encodeURIComponent(bookingId)}`, { method: "DELETE" });
+}

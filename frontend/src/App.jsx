@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchBoard, updateTask } from "./api.js";
 import ChatPanel from "./ChatPanel.jsx";
+import GpuSchedule from "./GpuSchedule.jsx";
 import TaskDetail from "./TaskDetail.jsx";
+import { cardBand } from "./gpuState.js";
 import { stateKind } from "./taskState.js";
 
 const POOL = "__pool__";
@@ -15,6 +17,17 @@ const POOL_GROUPS = [
   { kind: "waiting", label: "Waiting for prerequisites", alwaysShow: true },
   { kind: "done", label: "Completed", alwaysShow: false },
 ];
+
+/** Strip at the bottom of a card: the task's GPU booking (details in the GPU schedule tab). */
+function GpuBand({ task }) {
+  const band = cardBand(task);
+  if (!band) return null;
+  return (
+    <span className={`gpu-band ${band.kind}`} data-testid="gpu-band">
+      {band.text}
+    </span>
+  );
+}
 
 function TaskCard({ task, selectedId, highlightId, onSelect, onDragStart }) {
   const kind = stateKind(task);
@@ -42,6 +55,7 @@ function TaskCard({ task, selectedId, highlightId, onSelect, onDragStart }) {
         <i className="dot" aria-hidden="true" />
         {task.stateText}
       </span>
+      <GpuBand task={task} />
     </button>
   );
 }
@@ -229,6 +243,9 @@ export default function App() {
   const [selected, setSelected] = useState(null); // { id, rect }
   const [highlightId, setHighlightId] = useState(null);
   const highlightTimer = useRef(null);
+  const [view, setView] = useState("tasks"); // "tasks" | "gpu"
+  // What the GPU tab should show when opened from a task: { bookingId } or { bookTaskId }.
+  const [gpuFocus, setGpuFocus] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -300,6 +317,19 @@ export default function App() {
   };
   useEffect(() => () => clearTimeout(highlightTimer.current), []);
 
+  const handleSetNeedsGpu = (task, needsGpu) => save(task.id, { needsGpu });
+
+  const openGpu = (focus) => {
+    setSelected(null);
+    setView("gpu");
+    setGpuFocus({ ...focus, nonce: Date.now() });
+  };
+
+  const showTaskOnBoard = (taskId) => {
+    setView("tasks");
+    locateTask(taskId);
+  };
+
   if (!board) {
     return (
       <main className="loading">{error ? <p className="error">{error}</p> : <p>Loading…</p>}</main>
@@ -326,6 +356,26 @@ export default function App() {
       <main className="work">
         <header className="topbar">
           <h1>Experiment Coordination Board</h1>
+          <nav className="view-tabs" role="tablist" aria-label="Views">
+            {[
+              ["tasks", "Tasks"],
+              ["gpu", "GPU schedule"],
+            ].map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={view === id}
+                className={`view-tab ${view === id ? "on" : ""}`}
+                onClick={() => {
+                  setSelected(null);
+                  setView(id);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
           {error && (
             <p className="error" role="alert">
               {error}
@@ -333,20 +383,34 @@ export default function App() {
           )}
         </header>
 
-        <Timeline
-          members={board.members}
-          allTasks={board.tasks}
-          tasksFor={tasksFor}
-          dragging={dragging}
-          cardProps={cardProps}
-          onDropTask={handleDrop}
-        />
-        <TaskPool
-          tasks={tasksFor(null)}
-          dragging={dragging}
-          cardProps={cardProps}
-          onDropTask={handleDrop}
-        />
+        {view === "tasks" ? (
+          <>
+            <Timeline
+              members={board.members}
+              allTasks={board.tasks}
+              tasksFor={tasksFor}
+              dragging={dragging}
+              cardProps={cardProps}
+              onDropTask={handleDrop}
+            />
+            <TaskPool
+              tasks={tasksFor(null)}
+              dragging={dragging}
+              cardProps={cardProps}
+              onDropTask={handleDrop}
+            />
+          </>
+        ) : (
+          <GpuSchedule
+            board={board}
+            focus={gpuFocus}
+            onBoard={(newBoard) => {
+              setBoard(newBoard);
+              setError("");
+            }}
+            onShowTask={showTaskOnBoard}
+          />
+        )}
       </main>
 
       <ChatPanel
@@ -366,6 +430,8 @@ export default function App() {
           onToggleDone={handleToggleDone}
           onLocate={locateTask}
           onClose={() => setSelected(null)}
+          onOpenGpu={openGpu}
+          onSetNeedsGpu={handleSetNeedsGpu}
         />
       )}
     </div>

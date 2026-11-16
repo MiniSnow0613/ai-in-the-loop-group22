@@ -68,6 +68,13 @@ TASKS = [
      "Simulate overlapping bookings and boundary times, and record how the system handles them."),
 ]
 
+# GPUs on the GPU schedule tab. No bookings: they depend on the date of the demo.
+GPUS = [
+    ("demo-gpu-0", "lab-server / GPU 0", 24),
+    ("demo-gpu-1", "lab-server / GPU 1", 24),
+]
+
+
 def check_scenario():
     """Fail loudly if the seed data contradicts the board's own rules."""
     status = {t[0]: t[3] for t in TASKS}
@@ -90,7 +97,7 @@ def build(db_path):
     conn = connect(db_path)
     try:
         conn.execute("PRAGMA foreign_keys = OFF")  # allow dropping in any order
-        for table in ("task_dependencies", "tasks", "members", "meta"):
+        for table in ("gpu_bookings", "gpus", "task_dependencies", "tasks", "members", "meta"):
             conn.execute(f"DROP TABLE IF EXISTS {table}")
         conn.executescript(SCHEMA)
         conn.execute("PRAGMA foreign_keys = ON")
@@ -100,7 +107,11 @@ def build(db_path):
         # and as already using task_dependencies (nothing legacy to migrate).
         conn.executemany(
             "INSERT INTO meta (key, value) VALUES (?, ?)",
-            [("seeded", ts), ("dependencies_migrated", ts), ("demo", "group22-dev")],
+            [("seeded", ts), ("dependencies_migrated", ts), ("demo", "group22-dev"), ("gpus_seeded", ts)],
+        )
+        conn.executemany(
+            "INSERT INTO gpus (id, name, memory_gb, active, position) VALUES (?, ?, ?, 1, ?)",
+            [(gid, name, mem, i) for i, (gid, name, mem) in enumerate(GPUS)],
         )
         conn.executemany(
             "INSERT INTO members (id, name, position) VALUES (?, ?, ?)",
