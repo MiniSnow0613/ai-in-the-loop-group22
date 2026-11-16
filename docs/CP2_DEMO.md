@@ -1,6 +1,6 @@
 # CP2 Demo 操作指南
 
-這份指南適用於 Windows PowerShell。Demo 看板有 4 位成員和 13 張任務卡，可以試用拖曳分工和多個前置任務的解鎖流程。設定 API key 後，右側的 AI Assistant 也能依工作描述產生候選任務（見第 4 節）。
+這份指南適用於 Windows PowerShell。Demo 看板有 4 位成員和 13 張任務卡，可以試用拖曳分工、多個前置任務的解鎖流程，以及 GPU 預約（見第 5 節）。設定 API key 後，右側的 AI Assistant 也能依工作描述產生候選任務（見第 4 節）。
 
 ## 1. 首次安裝
 
@@ -34,16 +34,35 @@ $env:PORT = "5001"
 
 看到伺服器開始執行後，開啟 [http://localhost:5001](http://localhost:5001)。保持 PowerShell 開著，試用結束後按 Ctrl+C。5001 使用獨立的 Demo 資料庫 `backend/data/board_demo.db`。如果要開 5000 的主看板，請使用未設定上述環境變數的 PowerShell。
 
+### 區域網路連線
+
+要讓組員從自己的電腦連進 Demo 時，主機改從 repo 根目錄用下列指令啟動 5001。Flask 會接受區網內其他裝置的連線。
+
+```powershell
+$env:BOARD_DB_PATH = "backend\data\board_demo.db"
+.\backend\.venv\Scripts\python.exe -m flask --app backend\app.py run --host 0.0.0.0 --port 5001
+```
+
+1. 主機和組員接上同一個、可以互相連線的區網，例如同一個 Wi-Fi。
+2. 主機在 PowerShell 執行 `ipconfig`，找到目前使用中網卡的 IPv4 位址。
+3. 組員在瀏覽器開啟 `http://<主機IPv4>:5001`。
+
+第一次啟動時若 Windows 防火牆詢問是否允許存取，請只允許私人網路。這個模式下，區網內的人都能修改看板，請只在信任的網路使用。
+
+若要使用 AI Assistant，由主機在啟動 Flask 的同一個 PowerShell 先依第 4 節設定 key 和 `AI_PROVIDER`，再執行上面的啟動指令。
+
+最後請組員移動一張卡，確認主機的畫面也看得到變更。
+
 ## 3. 試用多前置任務
 
-介面和 Demo 任務名稱為英文。如果看到的任務名稱仍是中文，表示 Demo 資料庫是在介面改成英文前建立的，先依第 5 節重設即可。
+介面和 Demo 任務名稱為英文。如果看到的任務名稱仍是中文，表示 Demo 資料庫是在介面改成英文前建立的，先依第 6 節重設即可。
 
 1. 在 Task Pool 的 `Waiting for prerequisites` 找到 `Integrate Chatbot into Task Pool`。初始畫面有 4 張卡在 Task Pool，整合卡應顯示 `Waiting for 2 prerequisites`。
 2. 點開 Member B 的 `Build task creation API`，按 Mark as completed。整合卡應改成只等待 Member C，顯示 `Waiting for Member C: Connect AI task suggestions`。
 3. 點開 Member C 的 `Connect AI task suggestions`，按 Mark as completed。整合卡應移到 `Ready`，即使 Member D 的 `Implement GPU time-slot overlap check` 仍未完成。
 4. 把整合卡拖給任一位成員。它應出現在 `Dependency level` 第 3 層，重新整理後保留負責人和位置。
 
-可在同一台電腦用 Chrome 和 Edge 開啟同一個 5001 網址。一邊完成前置任務，另一邊約 5 秒後會讀取最新狀態，也可按 F5 確認。GPU 相關卡片是展示資料。右側的 AI Assistant 需要設定 API key 才能產生候選任務（見第 4 節）；沒有設定 key 時，Timeline 和 Task Pool 等一般看板功能仍可正常使用。
+可在同一台電腦用 Chrome 和 Edge 開啟同一個 5001 網址。一邊完成前置任務，另一邊約 5 秒後會讀取最新狀態，也可按 F5 確認。GPU 相關卡片是展示資料，第 5 節會用它們試用 GPU 預約。
 
 ## 4. 使用 AI Assistant 產生候選任務
 
@@ -75,19 +94,13 @@ $env:PORT = "5001"
 
 ### 4.3 試跑範例
 
-1. 開啟 [http://localhost:5001](http://localhost:5001)。確認右側 AI Assistant 右上角顯示 `Groq · openai/gpt-oss-20b`，說明區顯示 `Provider: Groq · Model: openai/gpt-oss-20b`。如果顯示 `API key missing`，請看 4.5。
-2. 在 AI Assistant 下方的輸入框輸入「更新資料集，再用新版資料訓練模型」，按 Enter 或 Send。等待幾秒，畫面會顯示正在詢問 Groq。
-3. 檢查預覽。上方會顯示 `N candidate tasks` 和 `From Groq · openai/gpt-oss-20b`，每張卡片有暫時編號（T1、T2…）。
-   - `Depends on`：這張卡的前置任務。預期「訓練模型」的卡片會依賴「更新資料集」的卡片。
-   - `Unlocks`：這張卡完成後可以開始的任務。
-   - `On board: 任務名稱`：候選任務依賴看板上原有的任務。
-   - 模型每次的輸出可能不同，卡片張數和標題不一定一樣，但前置關係應合理。
-   - 這時看板上還沒有新增任何卡片。
-4. 按 Add to Task Pool。預覽下方會顯示 `Added to the Task Pool.`，新卡片出現在左下的 Task Pool，第一張會短暫標示。沒有前置任務的卡片在 `Ready`，有前置任務的在 `Waiting for prerequisites`。
-5. 把新卡片拖到任一成員欄位，卡片會依前置關係放在對應的相依層級。
-6. 按 F5 重新整理，確認新卡片、負責人和前置關係都還在。也可以點開卡片，在 `Prerequisites` 區塊確認前置任務。
+1. 開啟 [http://localhost:5001](http://localhost:5001)，確認右側 AI Assistant 顯示 `Groq · openai/gpt-oss-20b`。
+2. 在輸入框輸入「更新資料集，再用新版資料訓練模型」，按 Enter 或 Send。
+3. 檢查預覽中的前置關係。`Depends on` 列出每張卡的前置任務，預期「訓練模型」依賴「更新資料集」；依賴看板原有任務時會顯示 `On board: 任務名稱`。模型每次的輸出可能不同，但前置關係應合理。這時看板還沒有新增任何卡片。
+4. 按 Add to Task Pool，新卡片會出現在 Task Pool。
+5. 把新卡片拖到任一成員欄位，再按 F5，確認卡片、負責人和前置關係都還在。
 
-如果預覽中出現 `Dependency problems`，表示這批候選任務有不存在的前置任務或循環相依。這時按 Add to Task Pool 會被拒絕，看板不會改變。可以按 Discard，再換個方式描述工作重新送出。
+如果預覽出現 `Dependency problems`，這批任務無法加入。可以按 Discard，換個方式描述工作再送出。
 
 ### 4.4 改用 OpenRouter（替代設定）
 
@@ -109,9 +122,21 @@ $env:AI_PROVIDER = "openrouter"
 - **`API key missing`**：Flask 讀不到目前供應商的 key。訊息會寫出要設定的變數，Groq 是 `GROQ_API_KEY`，OpenRouter 是 `OPENROUTER_API_KEY`。請確認 key 和 `AI_PROVIDER` 都是在啟動 Flask 的同一個視窗設定，按 Ctrl+C 後重新啟動。這時一般看板仍可正常使用。
 - **`429`（畫面顯示 `Rate limited`）**：短時間內送出太多請求，超過免費方案的次數限制。依訊息中的秒數稍候再按 Send；若沒有顯示秒數，約等一分鐘再試。看板上的資料不受影響。
 
-## 5. 重設 Demo
+## 5. 試用 GPU 預約
 
-要回到初始狀態時，另開 PowerShell，回到專案根目錄執行下列指令，再到 5001 按 F5。這會清除本次 Demo 的分工和進度，也會清除試跑時用 AI Assistant 加入的任務。
+上方的 `GPU schedule` 分頁是 GPU 時間表，每張 GPU 一列，顯示一天 00–24 點的預約。同一張 GPU 的預約時段不能重疊，任務卡底部的橘色色條會顯示這張卡的 GPU 預約。初始 Demo 有 `lab-server / GPU 0` 和 `lab-server / GPU 1` 兩張 GPU，沒有任何預約。如果只看到一張 `GPU 0`，表示 Demo 資料庫是在加入 GPU 功能前建立的，先依第 6 節重設即可。
+
+1. 在 Tasks 分頁點開 Member D 的 `Implement GPU time-slot overlap check`，在最下方的 GPU 區塊按 Needs a GPU。卡片底部應出現 `Needs a GPU · not booked`。
+2. 按 Book a GPU，畫面會切到 GPU schedule，New booking 已填好最早的空檔。按 Book 後，時間軸上應出現橘色的預約，卡片底部的色條也會顯示 GPU 和時段。
+3. 在同一列 GPU 上，點第一筆預約開始前一小時的空白處。新預約預設為 2 小時，會和第一筆重疊。Task 選 `Not a board task (other use)`，Used by 輸入「Lab shared job」。畫面應顯示紅色的 `Overlaps` 提示，按 Book 也會被拒絕。按 `Use earliest free slot` 改成最早可用的時段後，再按 Book 即可預約。
+4. 回到 Tasks 分頁，點開 Task Pool 的 `Test and document GPU conflict cases`，依步驟 1、2 預約。因為它還在等 Member D 的卡，色條會是虛線並顯示 `can't start yet`。在時間軸點這筆預約並按 Start job，畫面應列出尚未完成的前置任務。
+5. 在時間軸點步驟 2 的預約，按 Start job，預約會變成深橘色的 `Running`。結束後按 Mark finished。
+
+右上方的 Manage GPUs 可以新增、改名、停用或刪除 GPU。還有預約的 GPU 只能停用，不能刪除。Detect GPUs on this machine 會在執行 Flask 的電腦上用 `nvidia-smi` 找出 GPU；沒有 NVIDIA GPU 時會顯示找不到 `nvidia-smi`，改用手動新增即可。
+
+## 6. 重設 Demo
+
+要回到初始狀態時，另開 PowerShell，回到專案根目錄執行下列指令，再到 5001 按 F5。這會清除本次 Demo 的分工、進度和 GPU 預約，GPU 也會回到初始的兩張，試跑時用 AI Assistant 加入的任務同樣會被清除。
 
 ```powershell
 .\backend\.venv\Scripts\python.exe backend\seed_demo.py
