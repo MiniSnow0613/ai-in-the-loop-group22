@@ -34,6 +34,25 @@ $env:PORT = "5001"
 
 看到伺服器開始執行後，開啟 [http://localhost:5001](http://localhost:5001)。保持 PowerShell 開著，試用結束後按 Ctrl+C。5001 使用獨立的 Demo 資料庫 `backend/data/board_demo.db`。如果要開 5000 的主看板，請使用未設定上述環境變數的 PowerShell。
 
+### 區域網路連線
+
+要讓組員從自己的電腦連進 Demo 時，主機改從 repo 根目錄用下列指令啟動 5001。Flask 會接受區網內其他裝置的連線。
+
+```powershell
+$env:BOARD_DB_PATH = "backend\data\board_demo.db"
+.\backend\.venv\Scripts\python.exe -m flask --app backend\app.py run --host 0.0.0.0 --port 5001
+```
+
+1. 主機和組員接上同一個、可以互相連線的區網，例如同一個 Wi-Fi。
+2. 主機在 PowerShell 執行 `ipconfig`，找到目前使用中網卡的 IPv4 位址。
+3. 組員在瀏覽器開啟 `http://<主機IPv4>:5001`。
+
+第一次啟動時若 Windows 防火牆詢問是否允許存取，請只允許私人網路。這個模式下，區網內的人都能修改看板，請只在信任的網路使用。
+
+若要使用 AI Assistant，由主機在啟動 Flask 的同一個 PowerShell 先依第 4 節設定 key 和 `AI_PROVIDER`，再執行上面的啟動指令。
+
+最後請組員移動一張卡，確認主機的畫面也看得到變更。
+
 ## 3. 試用多前置任務
 
 介面和 Demo 任務名稱為英文。如果看到的任務名稱仍是中文，表示 Demo 資料庫是在介面改成英文前建立的，先依第 5 節重設即可。
@@ -43,7 +62,7 @@ $env:PORT = "5001"
 3. 點開 Member C 的 `Connect AI task suggestions`，按 Mark as completed。整合卡應移到 `Ready`，即使 Member D 的 `Implement GPU time-slot overlap check` 仍未完成。
 4. 把整合卡拖給任一位成員。它應出現在 `Dependency level` 第 3 層，重新整理後保留負責人和位置。
 
-可在同一台電腦用 Chrome 和 Edge 開啟同一個 5001 網址。一邊完成前置任務，另一邊約 5 秒後會讀取最新狀態，也可按 F5 確認。GPU 相關卡片是展示資料。右側的 AI Assistant 需要設定 API key 才能產生候選任務（見第 4 節）；沒有設定 key 時，Timeline 和 Task Pool 等一般看板功能仍可正常使用。
+可在同一台電腦用 Chrome 和 Edge 開啟同一個 5001 網址。一邊完成前置任務，另一邊約 5 秒後會讀取最新狀態，也可按 F5 確認。GPU 相關卡片是展示資料。
 
 ## 4. 使用 AI Assistant 產生候選任務
 
@@ -75,19 +94,13 @@ $env:PORT = "5001"
 
 ### 4.3 試跑範例
 
-1. 開啟 [http://localhost:5001](http://localhost:5001)。確認右側 AI Assistant 右上角顯示 `Groq · openai/gpt-oss-20b`，說明區顯示 `Provider: Groq · Model: openai/gpt-oss-20b`。如果顯示 `API key missing`，請看 4.5。
-2. 在 AI Assistant 下方的輸入框輸入「更新資料集，再用新版資料訓練模型」，按 Enter 或 Send。等待幾秒，畫面會顯示正在詢問 Groq。
-3. 檢查預覽。上方會顯示 `N candidate tasks` 和 `From Groq · openai/gpt-oss-20b`，每張卡片有暫時編號（T1、T2…）。
-   - `Depends on`：這張卡的前置任務。預期「訓練模型」的卡片會依賴「更新資料集」的卡片。
-   - `Unlocks`：這張卡完成後可以開始的任務。
-   - `On board: 任務名稱`：候選任務依賴看板上原有的任務。
-   - 模型每次的輸出可能不同，卡片張數和標題不一定一樣，但前置關係應合理。
-   - 這時看板上還沒有新增任何卡片。
-4. 按 Add to Task Pool。預覽下方會顯示 `Added to the Task Pool.`，新卡片出現在左下的 Task Pool，第一張會短暫標示。沒有前置任務的卡片在 `Ready`，有前置任務的在 `Waiting for prerequisites`。
-5. 把新卡片拖到任一成員欄位，卡片會依前置關係放在對應的相依層級。
-6. 按 F5 重新整理，確認新卡片、負責人和前置關係都還在。也可以點開卡片，在 `Prerequisites` 區塊確認前置任務。
+1. 開啟 [http://localhost:5001](http://localhost:5001)，確認右側 AI Assistant 顯示 `Groq · openai/gpt-oss-20b`。
+2. 在輸入框輸入「更新資料集，再用新版資料訓練模型」，按 Enter 或 Send。
+3. 檢查預覽中的前置關係。`Depends on` 列出每張卡的前置任務，預期「訓練模型」依賴「更新資料集」；依賴看板原有任務時會顯示 `On board: 任務名稱`。模型每次的輸出可能不同，但前置關係應合理。這時看板還沒有新增任何卡片。
+4. 按 Add to Task Pool，新卡片會出現在 Task Pool。
+5. 把新卡片拖到任一成員欄位，再按 F5，確認卡片、負責人和前置關係都還在。
 
-如果預覽中出現 `Dependency problems`，表示這批候選任務有不存在的前置任務或循環相依。這時按 Add to Task Pool 會被拒絕，看板不會改變。可以按 Discard，再換個方式描述工作重新送出。
+如果預覽出現 `Dependency problems`，這批任務無法加入。可以按 Discard，換個方式描述工作再送出。
 
 ### 4.4 改用 OpenRouter（替代設定）
 
