@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# SQLite data (created at runtime)
+backend/data/
+
+# Node / Vite
+node_modules/
+frontend/dist/
+
+# Local Claude Code preview config (absolute paths)
+.claude/launch.json

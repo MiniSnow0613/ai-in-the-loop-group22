@@ -8,6 +8,14 @@
 **What:** Modify md files structure. Only PULL_REQUEST_TEMPLATE.md will be kept in /.github. Others are moved to /docs
 **Why:** Only files recognized by GitHub automatically should be placed in /.github. Other documentations for team member to read, discuss, track can be stored in /docs. 
 
+## 2026-11-15 — Timeline organized by dependency level
+**What:** Organize the Timeline by dependency level. Place tasks with prerequisites one level after their latest prerequisite.
+**Why:** Aligning levels across teammates’ columns makes it easier to see which tasks must happen in order and which can proceed in parallel.
+
+## 2026-11-16 — Preview AI task suggestions before adding them
+**What:** Show a preview of AI-generated tasks and their dependencies. Validate and save them only after a user selects "Add to Task Pool".
+**Why:** Teammates can check the suggested tasks and their prerequisites before they appear on the shared board.
+
 ## 2026-11-21 — Transfer code steward
 **What:** Handed over the code steward role from YinXuan1223 to GalahadJr-1214.
 **Why:** Routine role rotation / workload balancing.
