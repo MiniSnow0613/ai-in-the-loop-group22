@@ -40,6 +40,15 @@ export function updateTask(taskId, changes) {
   return request(`/api/tasks/${encodeURIComponent(taskId)}`, json("PATCH", changes));
 }
 
+/** Add one task by hand: { title, description, prerequisites: [board task ids] }. */
+export function createTask(task) {
+  return request("/api/tasks", json("POST", task));
+}
+
+export function deleteTask(taskId) {
+  return request(`/api/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
+}
+
 export function fetchAiStatus() {
   return request("/api/ai/status");
 }

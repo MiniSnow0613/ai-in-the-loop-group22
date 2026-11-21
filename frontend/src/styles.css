@@ -215,6 +215,79 @@ h1, h2, h3, p { margin: 0; }
 .msg-warning { border: 1px solid #f0d58a; background: #fff8e5; border-radius: var(--radius); padding: 6px 9px; font-size: 0.8rem; }
 .msg-warning ul { margin: 4px 0 0; padding-left: 18px; }
 .msg-error-inline { color: #9b1c1c; background: #fdecec; border-radius: var(--radius); padding: 6px 9px; font-size: 0.8rem; margin: 0; }
+.suggestion.unselected { opacity: 0.55; border-style: dashed; }
+.suggestion-head input[type="checkbox"] { flex: none; margin: 0; align-self: center; }
+.suggestion-head strong { flex: 1; min-width: 0; }
+.suggestion-title-input, .suggestion-desc-input {
+  font: inherit; font-size: 0.85rem; padding: 3px 6px; min-width: 0;
+  border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel); color: var(--text);
+}
+.suggestion-title-input { flex: 1; font-weight: 600; }
+.suggestion-desc-input { display: block; width: 100%; margin-top: 5px; resize: vertical; font-size: 0.8rem; }
+.suggestion-select-all { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; }
+.btn.add-suggestion { font-size: 0.8rem; padding: 3px 10px; border-style: dashed; }
+.link-btn {
+  flex: none; font: inherit; font-size: 0.76rem; color: var(--accent); background: none;
+  border: none; padding: 0 2px; cursor: pointer;
+}
+.link-btn:hover { text-decoration: underline; }
+
+/* Prerequisite chips with a remove button and an "add" select (PrereqPicker.jsx) */
+.prereq-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+.prereq-picker .chip { display: inline-flex; align-items: center; gap: 3px; font-size: 0.76rem; }
+.chip-x {
+  font: inherit; line-height: 1; border: none; background: none; color: inherit;
+  cursor: pointer; padding: 0 1px; opacity: 0.7;
+}
+.chip-x:hover { opacity: 1; }
+.prereq-add {
+  font: inherit; font-size: 0.76rem; max-width: 100%; padding: 1px 4px; color: var(--accent);
+  border: 1px dashed var(--line-strong); border-radius: 999px; background: var(--panel); cursor: pointer;
+}
+
+/* Manual "New task" form in the Task Pool */
+.head-spacer { flex: 1; }
+.panel-head .btn { align-self: center; padding: 3px 10px; font-size: 0.8rem; }
+.new-task-form {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 10px; align-items: center;
+  max-width: 640px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 0.85rem;
+}
+.new-task-form label, .new-task-form .form-label { color: var(--muted); }
+.new-task-form input, .new-task-form textarea {
+  font: inherit; font-size: 0.85rem; padding: 4px 6px; min-width: 0; width: 100%; resize: vertical;
+  border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel); color: var(--text);
+}
+.new-task-form .form-wide { grid-column: 1 / -1; }
+.form-actions { display: flex; gap: 8px; }
+.form-actions .btn { align-self: auto; }
+
+.suggestion.dragging { outline: 2px dashed var(--accent); outline-offset: 1px; opacity: 0.7; }
+.drag-handle {
+  flex: none; align-self: center; cursor: grab; color: var(--muted); font-size: 0.8rem;
+  letter-spacing: -2px; padding: 0 2px; user-select: none;
+}
+.drag-handle:active { cursor: grabbing; }
+.remove-suggestion { font-size: 1rem; align-self: center; }
+.msg-notice { border: 1px solid #c9dbf7; background: var(--accent-soft); border-radius: var(--radius); padding: 6px 9px; font-size: 0.8rem; }
+.msg-notice ul { margin: 4px 0 0; padding-left: 18px; }
+
+/* Task detail: edit form, delete confirmation */
+.detail-manage { display: flex; justify-content: space-between; border-top: 1px solid var(--line); padding-top: 8px; }
+.link-btn.danger, .detail-confirm strong { color: #9b1c1c; }
+.btn.danger { background: #cf222e; border-color: #cf222e; color: #fff; }
+.btn.danger:hover:not(:disabled) { background: #a40e26; border-color: #a40e26; color: #fff; }
+.detail-edit { display: flex; flex-direction: column; gap: 6px; font-size: 0.85rem; }
+.detail-edit label, .detail-edit .form-label { color: var(--muted); font-size: 0.8rem; }
+.detail-edit input, .detail-edit textarea {
+  font: inherit; font-size: 0.85rem; padding: 4px 6px; width: 100%; resize: vertical;
+  border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel); color: var(--text);
+}
+.detail-confirm {
+  display: flex; flex-direction: column; gap: 6px; font-size: 0.85rem;
+  border: 1px solid #f3c2c2; background: #fdecec; border-radius: var(--radius); padding: 8px 10px;
+}
+.detail-confirm ul { margin: 0; padding-left: 18px; }
+
 .suggestion-actions { display: flex; gap: 8px; }
 .suggestion-actions .btn { align-self: auto; }
 .chat-input { border-top: 1px solid var(--line); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }

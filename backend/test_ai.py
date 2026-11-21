@@ -144,6 +144,33 @@ def test_accept_saves_batch_with_dependencies(db):
     assert len(restarted["tasks"]) == 5
 
 
+def test_accept_subset_with_edits_saves_only_those(db):
+    """The preview lets users untick tasks and edit or add some; only what is sent is saved."""
+    client = client_for(db, FakeSuggester(SUGGESTED))
+    before = len(client.get("/api/board").get_json()["tasks"])
+    chosen = [
+        {"id": "T1", "title": "Collect rollouts (edited)", "description": "", "prerequisites": []},
+        {"id": "T4", "title": "Clean rollouts", "description": "Added by the user.", "prerequisites": ["T1"]},
+    ]
+    resp = client.post("/api/suggestions/accept", json={"tasks": chosen})
+    assert resp.status_code == 200
+    board = resp.get_json()["board"]
+    assert len(board["tasks"]) == before + 2
+    collect = by_title(board, "Collect rollouts (edited)")
+    clean = by_title(board, "Clean rollouts")
+    assert [p["id"] for p in clean["prerequisites"]] == [collect["id"]]
+    assert not any(t["title"] in ("Train policy", "Evaluate checkpoint") for t in board["tasks"])
+
+
+def test_accept_subset_missing_prerequisite_is_rejected(db):
+    client = client_for(db, FakeSuggester(SUGGESTED))
+    before = snapshot(db)
+    # T2 depends on T1, which is left out.
+    resp = client.post("/api/suggestions/accept", json={"tasks": [SUGGESTED[1]]})
+    assert resp.status_code == 422
+    assert snapshot(db) == before
+
+
 @pytest.mark.parametrize(
     "tasks, expected",
     [

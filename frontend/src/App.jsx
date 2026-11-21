@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchBoard, updateTask } from "./api.js";
+import { createTask, deleteTask, fetchBoard, updateTask } from "./api.js";
 import ChatPanel from "./ChatPanel.jsx";
 import GpuSchedule from "./GpuSchedule.jsx";
+import NewTaskForm from "./NewTaskForm.jsx";
 import TaskDetail from "./TaskDetail.jsx";
 import { cardBand } from "./gpuState.js";
 import { stateKind } from "./taskState.js";
@@ -191,8 +192,9 @@ function Timeline({ members, allTasks, tasksFor, dragging, cardProps, onDropTask
   );
 }
 
-function TaskPool({ tasks, dragging, cardProps, onDropTask }) {
+function TaskPool({ tasks, allTasks, dragging, cardProps, onDropTask, onCreateTask }) {
   const { over, handlers } = useDropTarget(POOL, onDropTask);
+  const [adding, setAdding] = useState(false);
   return (
     <section
       className={`panel pool-panel ${dragging ? "droppable" : ""} ${over ? "over" : ""}`}
@@ -203,7 +205,16 @@ function TaskPool({ tasks, dragging, cardProps, onDropTask }) {
       <div className="panel-head">
         <h2>Task Pool</h2>
         <span className="hint">Unassigned · drag a card to a member column above to assign it</span>
+        <span className="head-spacer" />
+        {!adding && (
+          <button type="button" className="btn" onClick={() => setAdding(true)}>
+            + New task
+          </button>
+        )}
       </div>
+      {adding && (
+        <NewTaskForm boardTasks={allTasks} onCreate={onCreateTask} onClose={() => setAdding(false)} />
+      )}
       {tasks.length === 0 ? (
         <div className="pool-row">
           <p className="empty">All tasks are assigned. Drag a card back here to unassign it.</p>
@@ -319,6 +330,26 @@ export default function App() {
 
   const handleSetNeedsGpu = (task, needsGpu) => save(task.id, { needsGpu });
 
+  // Errors are thrown back to the form so it can show them and stay open.
+  const handleCreateTask = async (task) => {
+    const data = await createTask(task);
+    setBoard(data.board);
+    setError("");
+    locateTask(data.createdId);
+  };
+
+  const handleSaveTask = async (taskId, changes) => {
+    setBoard(await updateTask(taskId, changes));
+    setError("");
+  };
+
+  const handleDeleteTask = async (taskId) => {
+    const newBoard = await deleteTask(taskId);
+    setSelected(null);
+    setBoard(newBoard);
+    setError("");
+  };
+
   const openGpu = (focus) => {
     setSelected(null);
     setView("gpu");
@@ -395,9 +426,11 @@ export default function App() {
             />
             <TaskPool
               tasks={tasksFor(null)}
+              allTasks={board.tasks}
               dragging={dragging}
               cardProps={cardProps}
               onDropTask={handleDrop}
+              onCreateTask={handleCreateTask}
             />
           </>
         ) : (
@@ -414,6 +447,7 @@ export default function App() {
       </main>
 
       <ChatPanel
+        boardTasks={board.tasks}
         onTasksAdded={(newBoard, createdIds) => {
           setBoard(newBoard);
           setError("");
@@ -432,6 +466,8 @@ export default function App() {
           onClose={() => setSelected(null)}
           onOpenGpu={openGpu}
           onSetNeedsGpu={handleSetNeedsGpu}
+          onSaveTask={handleSaveTask}
+          onDeleteTask={handleDeleteTask}
         />
       )}
     </div>
