@@ -62,6 +62,7 @@ $env:BOARD_DB_PATH = "backend\data\board_demo.db"
 3. 點開 Member C 的 `Connect AI task suggestions`，按 Mark as completed。整合卡應移到 `Ready`，即使 Member D 的 `Implement GPU time-slot overlap check` 仍未完成。
 4. 把整合卡拖給任一位成員。它應出現在 `Dependency level` 第 3 層，重新整理後保留負責人和位置。
 
+
 可在同一台電腦用 Chrome 和 Edge 開啟同一個 5001 網址。一邊完成前置任務，另一邊約 5 秒後會讀取最新狀態，也可按 F5 確認。GPU 相關卡片是展示資料，第 5 節會用它們試用 GPU 預約。
 
 ## 4. 使用 AI Assistant 產生候選任務
