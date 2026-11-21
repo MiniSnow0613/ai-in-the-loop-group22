@@ -11,6 +11,7 @@ from pathlib import Path
 from flask import Flask, abort, g, jsonify, request, send_from_directory
 
 import ai_suggest
+import gpu
 from ai_suggest import AiSuggester, SuggestionError
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -42,7 +43,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     position     INTEGER NOT NULL DEFAULT 0,
     updated_at   TEXT NOT NULL,
     description  TEXT,
-    summary      TEXT
+    summary      TEXT,
+    needs_gpu    INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS task_dependencies (
     task_id         TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -52,10 +54,37 @@ CREATE TABLE IF NOT EXISTS task_dependencies (
 );
 CREATE INDEX IF NOT EXISTS idx_task_dependencies_prerequisite
     ON task_dependencies (prerequisite_id);
+-- GPU schedule (rules in gpu.py). Times are local "YYYY-MM-DDTHH:MM" strings.
+CREATE TABLE IF NOT EXISTS gpus (
+    id        TEXT PRIMARY KEY,
+    name      TEXT NOT NULL,
+    memory_gb INTEGER,
+    active    INTEGER NOT NULL DEFAULT 1,
+    position  INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS gpu_bookings (
+    id         TEXT PRIMARY KEY,
+    gpu_id     TEXT NOT NULL REFERENCES gpus(id),
+    task_id    TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+    label      TEXT,
+    start_at   TEXT NOT NULL,
+    end_at     TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'planned',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CHECK (start_at < end_at),
+    CHECK (task_id IS NOT NULL OR label IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS idx_gpu_bookings_gpu ON gpu_bookings (gpu_id, start_at);
+CREATE INDEX IF NOT EXISTS idx_gpu_bookings_task ON gpu_bookings (task_id);
 """
 
 # Columns added after the first CP2 version; added in place to older databases.
-ADDED_TASK_COLUMNS = {"description": "TEXT", "summary": "TEXT"}
+ADDED_TASK_COLUMNS = {
+    "description": "TEXT",
+    "summary": "TEXT",
+    "needs_gpu": "INTEGER NOT NULL DEFAULT 0",
+}
 
 SEED_MEMBERS = [
     ("member-a", "Member A", 0),
@@ -143,6 +172,7 @@ def init_db(db_path):
             "UPDATE tasks SET description = ? WHERE id = ? AND is_example = 1 AND description IS NULL",
             [(desc, tid) for tid, desc in SEED_DESCRIPTIONS.items()],
         )
+        gpu.seed_default_gpu(conn, now_iso())
         conn.commit()
     finally:
         conn.close()
@@ -213,6 +243,7 @@ def build_board(conn):
         for p in prereqs[tid]:
             dependents[p].append(tid)
     timeline_rows = compute_rows(prereqs)
+    gpu_bookings = gpu.task_bookings(conn)
 
     def ref(tid):
         t = by_id[tid]
@@ -243,6 +274,8 @@ def build_board(conn):
                 "stateText": state_text(r, pending, names),
                 "row": timeline_rows[r["id"]],
                 "updatedAt": r["updated_at"],
+                "needsGpu": bool(r["needs_gpu"]) or r["id"] in gpu_bookings,
+                "gpuBooking": gpu_bookings.get(r["id"]),
             }
         )
     return {"members": members, "tasks": tasks}
@@ -282,7 +315,7 @@ def new_task_id(taken):
             return tid
 
 
-def create_app(db_path=None, suggester=None):
+def create_app(db_path=None, suggester=None, gpu_detector=None):
     app = Flask(__name__, static_folder=None)
     app.config["DB_PATH"] = str(db_path or os.environ.get("BOARD_DB_PATH") or DEFAULT_DB_PATH)
     # Tests pass a fake suggester; the real one calls the provider set by AI_PROVIDER.
@@ -348,6 +381,17 @@ def create_app(db_path=None, suggester=None):
                         409,
                     )
             updates["status"] = status
+
+        if "needsGpu" in body:
+            needs = body["needsGpu"]
+            if not isinstance(needs, bool):
+                return jsonify(error="needsGpu must be true or false."), 400
+            if not needs and db().execute(
+                "SELECT 1 FROM gpu_bookings WHERE task_id = ? AND status IN ('planned', 'running')",
+                (task_id,),
+            ).fetchone():
+                return jsonify(error="This task has a planned or running GPU booking. Cancel it first."), 409
+            updates["needs_gpu"] = int(needs)
 
         if not updates:
             return jsonify(error="Nothing to update."), 400
@@ -451,6 +495,10 @@ def create_app(db_path=None, suggester=None):
             return jsonify(error=f"Nothing was added: the database rejected the tasks ({e}).", code="db_error"), 500
 
         return jsonify(board=build_board(conn), createdIds=[id_map[t["id"]] for t in tasks], idMap=id_map)
+
+    # ---------- GPU list and bookings (rules in gpu.py) ----------
+    # Tests pass a fake detector; the real one runs nvidia-smi on this machine.
+    gpu.register_gpu_routes(app, db, build_board, now_iso, detector=gpu_detector or gpu.detect_local_gpus)
 
     # Serve the built React app (npm run build) so one URL is enough.
     @app.get("/", defaults={"path": ""})
