@@ -307,12 +307,68 @@ def suggestion_preview(tasks, existing_titles):
     ]
 
 
-def new_task_id(taken):
+def new_task_id(taken, prefix="ai"):
     while True:
-        tid = f"ai-{uuid.uuid4().hex[:8]}"
+        tid = f"{prefix}-{uuid.uuid4().hex[:8]}"
         if tid not in taken:
             taken.add(tid)
             return tid
+
+
+def insert_tasks(conn, tasks, id_map):
+    """Insert unassigned tasks and their prerequisites at the end of the board.
+
+    `tasks` are normalized dicts (id, title, description, prerequisites);
+    `id_map` maps each task's temporary id to its new board id. Prerequisites
+    not in id_map are existing board ids. The caller commits or rolls back.
+    """
+    start = conn.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM tasks").fetchone()[0]
+    ts = now_iso()
+    conn.executemany(
+        """INSERT INTO tasks
+           (id, title, is_example, assignee_id, status, waiting_text,
+            position, updated_at, description, summary)
+           VALUES (?, ?, 0, NULL, 'todo', NULL, ?, ?, ?, NULL)""",
+        [
+            (id_map[t["id"]], t["title"], start + i, ts, t["description"] or None)
+            for i, t in enumerate(tasks)
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO task_dependencies (task_id, prerequisite_id) VALUES (?, ?)",
+        [(id_map[t["id"]], id_map.get(p, p)) for t in tasks for p in t["prerequisites"]],
+    )
+
+
+def prerequisite_problem(conn, task_id, prereqs, status):
+    """(message, http status) if `prereqs` can't be the prerequisites of `task_id`, else None."""
+    by_id = {r["id"]: r for r in conn.execute("SELECT id, title, status FROM tasks")}
+    missing = [p for p in prereqs if p not in by_id]
+    if missing:
+        return f"Unknown prerequisite: {', '.join(missing)}.", 422
+    if task_id in prereqs:
+        return "A task cannot depend on itself.", 422
+    # Tasks that (directly or indirectly) depend on task_id can't become its prerequisites.
+    dependents = {}
+    for r in conn.execute("SELECT task_id, prerequisite_id FROM task_dependencies"):
+        dependents.setdefault(r["prerequisite_id"], []).append(r["task_id"])
+    downstream, stack = set(), [task_id]
+    while stack:
+        for d in dependents.get(stack.pop(), []):
+            if d not in downstream:
+                downstream.add(d)
+                stack.append(d)
+    loops = [p for p in prereqs if p in downstream]
+    if loops:
+        return f"Circular dependency: {titles([by_id[p] for p in loops])} already depends on this task.", 422
+    if status == "done":
+        unfinished = [by_id[p] for p in prereqs if by_id[p]["status"] != "done"]
+        if unfinished:
+            return (
+                f"This task is completed, so its prerequisites must be completed too: {titles(unfinished)}. Undo completion first.",
+                409,
+            )
+    return None
 
 
 def create_app(db_path=None, suggester=None, gpu_detector=None):
@@ -393,19 +449,93 @@ def create_app(db_path=None, suggester=None, gpu_detector=None):
                 return jsonify(error="This task has a planned or running GPU booking. Cancel it first."), 409
             updates["needs_gpu"] = int(needs)
 
-        if not updates:
+        if "title" in body:
+            title = body["title"]
+            if not isinstance(title, str) or not title.strip():
+                return jsonify(error="Give the task a title."), 400
+            updates["title"] = " ".join(title.split())[: ai_suggest.MAX_TITLE]
+
+        if "description" in body:
+            description = body["description"] or ""
+            if not isinstance(description, str):
+                return jsonify(error="The description must be text."), 400
+            updates["description"] = " ".join(description.split())[: ai_suggest.MAX_DESCRIPTION] or None
+
+        new_prereqs = None
+        if "prerequisites" in body:
+            prereqs = body["prerequisites"]
+            if not isinstance(prereqs, list) or not all(isinstance(p, str) for p in prereqs):
+                return jsonify(error="Prerequisites must be a list of task ids."), 400
+            new_prereqs = list(dict.fromkeys(p.strip() for p in prereqs if p.strip()))
+            problem = prerequisite_problem(db(), task_id, new_prereqs, row["status"])
+            if problem:
+                return jsonify(error=problem[0]), problem[1]
+
+        if not updates and new_prereqs is None:
             return jsonify(error="Nothing to update."), 400
 
         updates["updated_at"] = now_iso()
         cols = ", ".join(f"{k} = ?" for k in updates)
         db().execute(f"UPDATE tasks SET {cols} WHERE id = ?", (*updates.values(), task_id))
+        if new_prereqs is not None:
+            db().execute("DELETE FROM task_dependencies WHERE task_id = ?", (task_id,))
+            db().executemany(
+                "INSERT INTO task_dependencies (task_id, prerequisite_id) VALUES (?, ?)",
+                [(task_id, p) for p in new_prereqs],
+            )
         db().commit()
         return jsonify(build_board(db()))
 
-    # ---------- AI task suggestions (OpenRouter or Groq, see AI_PROVIDER) ----------
+    @app.delete("/api/tasks/<task_id>")
+    def delete_task(task_id):
+        """Delete a task. Tasks that depended on it lose that prerequisite; its GPU bookings go too."""
+        conn = db()
+        if conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone() is None:
+            abort(404, description="Task not found.")
+        # task_dependencies and gpu_bookings rows go with it (ON DELETE CASCADE).
+        conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        conn.commit()
+        return jsonify(build_board(conn))
 
     def existing_titles():
         return {r["id"]: r["title"] for r in db().execute("SELECT id, title FROM tasks")}
+
+    @app.post("/api/tasks")
+    def create_task():
+        """Add one task by hand. It goes to the Task Pool; prerequisites must be board tasks."""
+        body = request.get_json(silent=True) or {}
+        title = body.get("title")
+        description = body.get("description") or ""
+        prereqs = body.get("prerequisites") or []
+        if not isinstance(title, str) or not title.strip():
+            return jsonify(error="Give the task a title.", code="invalid_task"), 400
+        if not isinstance(description, str):
+            return jsonify(error="The description must be text.", code="invalid_task"), 400
+        if not isinstance(prereqs, list) or not all(isinstance(p, str) for p in prereqs):
+            return jsonify(error="Prerequisites must be a list of task ids.", code="invalid_task"), 400
+        task = {
+            "id": "new",
+            "title": " ".join(title.split())[: ai_suggest.MAX_TITLE],
+            "description": " ".join(description.split())[: ai_suggest.MAX_DESCRIPTION],
+            "prerequisites": list(dict.fromkeys(p.strip() for p in prereqs if p.strip())),
+        }
+
+        conn = db()
+        titles_by_id = existing_titles()
+        missing = [p for p in task["prerequisites"] if p not in titles_by_id]
+        if missing:
+            return jsonify(error=f"Unknown prerequisite: {', '.join(missing)}.", code="invalid_dependencies"), 422
+
+        id_map = {"new": new_task_id(set(titles_by_id), prefix="task")}
+        try:
+            insert_tasks(conn, [task], id_map)
+            conn.commit()
+        except sqlite3.Error as e:
+            conn.rollback()
+            return jsonify(error=f"The task was not added: the database rejected it ({e}).", code="db_error"), 500
+        return jsonify(board=build_board(conn), createdId=id_map["new"]), 201
+
+    # ---------- AI task suggestions (OpenRouter or Groq, see AI_PROVIDER) ----------
 
     @app.get("/api/ai/status")
     def ai_status():
@@ -468,27 +598,8 @@ def create_app(db_path=None, suggester=None, gpu_detector=None):
 
         taken = set(titles_by_id)
         id_map = {t["id"]: new_task_id(taken) for t in tasks}
-        start = conn.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM tasks").fetchone()[0]
-        ts = now_iso()
         try:
-            conn.executemany(
-                """INSERT INTO tasks
-                   (id, title, is_example, assignee_id, status, waiting_text,
-                    position, updated_at, description, summary)
-                   VALUES (?, ?, 0, NULL, 'todo', NULL, ?, ?, ?, NULL)""",
-                [
-                    (id_map[t["id"]], t["title"], start + i, ts, t["description"] or None)
-                    for i, t in enumerate(tasks)
-                ],
-            )
-            conn.executemany(
-                "INSERT INTO task_dependencies (task_id, prerequisite_id) VALUES (?, ?)",
-                [
-                    (id_map[t["id"]], id_map.get(p, p))
-                    for t in tasks
-                    for p in t["prerequisites"]
-                ],
-            )
+            insert_tasks(conn, tasks, id_map)
             conn.commit()
         except sqlite3.Error as e:
             conn.rollback()

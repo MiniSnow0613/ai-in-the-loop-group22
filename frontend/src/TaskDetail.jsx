@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { bookingKind, formatRange, KIND_LABEL } from "./gpuState.js";
+import PrereqPicker from "./PrereqPicker.jsx";
 import { stateKind } from "./taskState.js";
 
 const GAP = 8;
@@ -109,6 +110,126 @@ function GpuSection({ task, onOpenGpu, onSetNeedsGpu }) {
   );
 }
 
+/** Edit title, description and prerequisites. Errors from the server stay in the form. */
+function EditForm({ task, tasksById, onSave, onCancel }) {
+  const [title, setTitle] = useState(task.title);
+  const [description, setDescription] = useState(task.description || "");
+  const [prerequisites, setPrerequisites] = useState(task.prerequisites.map((p) => p.id));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  // Tasks that already depend on this one (directly or not) would make a loop.
+  const downstream = new Set();
+  const stack = [task.id];
+  while (stack.length) {
+    for (const d of tasksById.get(stack.pop())?.dependents || []) {
+      if (!downstream.has(d.id)) {
+        downstream.add(d.id);
+        stack.push(d.id);
+      }
+    }
+  }
+  const options = [...tasksById.values()]
+    .filter((t) => t.id !== task.id && !downstream.has(t.id))
+    .map((t) => ({
+      id: t.id,
+      kind: "existing",
+      label: t.title,
+      group: t.status === "done" ? "Completed" : "Not completed",
+    }));
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!title.trim() || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(task.id, { title, description, prerequisites });
+      onCancel();
+    } catch (err) {
+      setError(err.message);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form className="detail-edit" onSubmit={submit} aria-label="Edit task">
+      <label htmlFor="edit-title">Title</label>
+      <input id="edit-title" value={title} maxLength={120} autoFocus onChange={(e) => setTitle(e.target.value)} />
+      <label htmlFor="edit-desc">Description</label>
+      <textarea
+        id="edit-desc"
+        rows={3}
+        value={description}
+        maxLength={500}
+        placeholder="Optional"
+        onChange={(e) => setDescription(e.target.value)}
+      />
+      <span className="form-label">Prerequisites</span>
+      <PrereqPicker value={prerequisites} options={options} onChange={setPrerequisites} />
+      {error && (
+        <p className="msg-error-inline" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="form-actions">
+        <button type="submit" className="btn primary" disabled={!title.trim() || saving}>
+          {saving ? "Saving…" : "Save"}
+        </button>
+        <button type="button" className="btn" onClick={onCancel} disabled={saving}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** Ask before deleting; say which tasks stop waiting for it and what else goes. */
+function DeleteConfirm({ task, onDelete, onCancel }) {
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState("");
+  const remove = async () => {
+    setDeleting(true);
+    setError("");
+    try {
+      await onDelete(task.id);
+    } catch (err) {
+      setError(err.message);
+      setDeleting(false);
+    }
+  };
+  return (
+    <div className="detail-confirm" role="alertdialog" aria-label="Delete task">
+      <strong>Delete “{task.title}”?</strong>
+      {task.dependents.length > 0 && (
+        <>
+          <p>These tasks will no longer wait for it:</p>
+          <ul>
+            {task.dependents.map((d) => (
+              <li key={d.id}>{d.title}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      {task.gpuBooking && <p>Its GPU booking ({task.gpuBooking.gpuName}) will be deleted too.</p>}
+      <p className="muted">This cannot be undone.</p>
+      {error && (
+        <p className="msg-error-inline" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="form-actions">
+        <button type="button" className="btn danger" disabled={deleting} onClick={remove}>
+          {deleting ? "Deleting…" : "Delete task"}
+        </button>
+        <button type="button" className="btn" disabled={deleting} onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** Popover next to the clicked card: description, prerequisites, affected tasks. */
 export default function TaskDetail({
   task,
@@ -120,9 +241,12 @@ export default function TaskDetail({
   onClose,
   onOpenGpu,
   onSetNeedsGpu,
+  onSaveTask,
+  onDeleteTask,
 }) {
   const ref = useRef(null);
   const [pos, setPos] = useState({ left: -9999, top: -9999 });
+  const [mode, setMode] = useState("view"); // "view" | "edit" | "delete"
   const kind = stateKind(task);
 
   // Place to the right of the card, or to the left if there is no room.
@@ -135,7 +259,10 @@ export default function TaskDetail({
     left = Math.max(MARGIN, left);
     const top = Math.min(Math.max(MARGIN, anchor.top), window.innerHeight - height - MARGIN);
     setPos({ left, top: Math.max(MARGIN, top) });
-  }, [anchor, task.prerequisites.length, task.dependents.length]);
+  }, [anchor, task.prerequisites.length, task.dependents.length, mode]);
+
+  // Switching to another card starts in view mode again.
+  useEffect(() => setMode("view"), [task.id]);
 
   useEffect(() => {
     const onKey = (e) => e.key === "Escape" && onClose();
@@ -191,6 +318,14 @@ export default function TaskDetail({
         {task.stateText}
       </p>
 
+      {mode === "edit" && (
+        <EditForm task={task} tasksById={tasksById} onSave={onSaveTask} onCancel={() => setMode("view")} />
+      )}
+      {mode === "delete" && (
+        <DeleteConfirm task={task} onDelete={onDeleteTask} onCancel={() => setMode("view")} />
+      )}
+      {mode === "view" && (
+      <>
       <dl>
         <dt>Owner</dt>
         <dd>{assigneeName || "Unassigned (Task Pool)"}</dd>
@@ -234,6 +369,16 @@ export default function TaskDetail({
       >
         {isDone ? "Undo completion" : "Mark as completed"}
       </button>
+      <div className="detail-manage">
+        <button type="button" className="link-btn" onClick={() => setMode("edit")}>
+          Edit task
+        </button>
+        <button type="button" className="link-btn danger" onClick={() => setMode("delete")}>
+          Delete task
+        </button>
+      </div>
+      </>
+      )}
     </div>
   );
 }

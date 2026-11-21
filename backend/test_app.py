@@ -284,3 +284,139 @@ def test_compute_rows_multiple_prerequisites_use_latest():
 def test_compute_rows_survives_cycle():
     rows = compute_rows({"a": ["b"], "b": ["a"]})
     assert set(rows) == {"a", "b"} and all(r >= 1 for r in rows.values())
+
+
+# ---------- manual task creation (POST /api/tasks) ----------
+
+def test_create_task_goes_to_pool_with_prerequisites(tmp_path):
+    client = make_client(tmp_path)
+    resp = client.post(
+        "/api/tasks",
+        json={"title": "  Clean   raw data ", "description": "By hand.", "prerequisites": ["example-update-dataset"]},
+    )
+    assert resp.status_code == 201
+    data = resp.get_json()
+    new = task(data["board"], data["createdId"])
+    assert data["createdId"].startswith("task-")
+    assert new["title"] == "Clean raw data"
+    assert new["description"] == "By hand."
+    assert new["assigneeId"] is None and new["status"] == "todo"
+    assert ids(new["prerequisites"]) == ["example-update-dataset"]
+    assert new["row"] == 2 and new["blocked"] is True
+    # It survives a restart and can be assigned like any other card.
+    assert patch(client, data["createdId"], assigneeId="member-a").status_code == 200
+    again = create_app(tmp_path / "test.db").test_client().get("/api/board").get_json()
+    assert task(again, data["createdId"])["assigneeId"] == "member-a"
+
+
+def test_create_task_without_prerequisites(tmp_path):
+    client = make_client(tmp_path)
+    resp = client.post("/api/tasks", json={"title": "Write report"})
+    assert resp.status_code == 201
+    data = resp.get_json()
+    new = task(data["board"], data["createdId"])
+    assert new["prerequisites"] == [] and new["row"] == 1 and new["description"] is None
+
+
+@pytest.mark.parametrize(
+    "body, status",
+    [
+        ({}, 400),
+        ({"title": "   "}, 400),
+        ({"title": "A", "description": 5}, 400),
+        ({"title": "A", "prerequisites": "example-update-dataset"}, 400),
+        ({"title": "A", "prerequisites": ["nope"]}, 422),
+    ],
+)
+def test_create_task_rejects_bad_input_and_keeps_board(tmp_path, body, status):
+    client = make_client(tmp_path)
+    before = client.get("/api/board").get_json()
+    resp = client.post("/api/tasks", json=body)
+    assert resp.status_code == status
+    assert resp.get_json()["error"]
+    assert client.get("/api/board").get_json() == before
+
+
+# ---------- editing a task (PATCH title / description / prerequisites) ----------
+
+def test_edit_title_description_and_prerequisites(tmp_path):
+    client = make_client(tmp_path)
+    new_id = client.post("/api/tasks", json={"title": "Write report"}).get_json()["createdId"]
+    resp = patch(
+        client,
+        new_id,
+        title="  Write   final report ",
+        description="Summarise results.",
+        prerequisites=["example-train-model"],
+    )
+    assert resp.status_code == 200
+    t = task(resp.get_json(), new_id)
+    assert t["title"] == "Write final report"
+    assert t["description"] == "Summarise results."
+    assert ids(t["prerequisites"]) == ["example-train-model"]
+    assert t["row"] == 3
+    assert new_id in ids(task(resp.get_json(), "example-train-model")["dependents"])
+
+    # Clearing description and prerequisites.
+    t = task(patch(client, new_id, description="", prerequisites=[]).get_json(), new_id)
+    assert t["description"] is None and t["prerequisites"] == [] and t["row"] == 1
+
+
+@pytest.mark.parametrize(
+    "body, status",
+    [
+        ({"title": "  "}, 400),
+        ({"description": 3}, 400),
+        ({"prerequisites": "x"}, 400),
+        ({"prerequisites": ["nope"]}, 422),
+        ({"prerequisites": ["example-update-dataset"]}, 422),  # itself
+    ],
+)
+def test_edit_rejects_bad_input(tmp_path, body, status):
+    client = make_client(tmp_path)
+    before = client.get("/api/board").get_json()
+    resp = patch(client, "example-update-dataset", **body)
+    assert resp.status_code == status
+    assert client.get("/api/board").get_json() == before
+
+
+def test_edit_rejects_circular_dependency(tmp_path):
+    client = make_client(tmp_path)
+    # train depends on update; making update depend on train would loop.
+    resp = patch(client, "example-update-dataset", prerequisites=["example-train-model"])
+    assert resp.status_code == 422
+    assert "Circular" in resp.get_json()["error"]
+
+
+def test_completed_task_cannot_get_unfinished_prerequisite(tmp_path):
+    client = make_client(tmp_path)
+    new_id = client.post("/api/tasks", json={"title": "Side task"}).get_json()["createdId"]
+    assert patch(client, new_id, status="done").status_code == 200
+    resp = patch(client, new_id, prerequisites=["example-train-model"])
+    assert resp.status_code == 409
+    assert task(client.get("/api/board").get_json(), new_id)["prerequisites"] == []
+
+
+# ---------- deleting a task ----------
+
+def test_delete_task_unlinks_dependents(tmp_path):
+    client = make_client(tmp_path)
+    resp = client.delete("/api/tasks/example-update-dataset")
+    assert resp.status_code == 200
+    board = resp.get_json()
+    assert all(t["id"] != "example-update-dataset" for t in board["tasks"])
+    train = task(board, "example-train-model")
+    assert train["prerequisites"] == [] and train["blocked"] is False and train["row"] == 1
+    assert client.delete("/api/tasks/example-update-dataset").status_code == 404
+
+
+def test_delete_task_removes_its_gpu_booking(tmp_path):
+    client = make_client(tmp_path)
+    gpu_id = client.get("/api/gpus").get_json()["gpus"][0]["id"]
+    resp = client.post(
+        "/api/gpu-bookings",
+        json={"gpuId": gpu_id, "taskId": "example-update-dataset", "startAt": "2026-11-16T10:00", "endAt": "2026-11-16T12:00"},
+    )
+    assert resp.status_code == 200, resp.get_json()
+    assert client.delete("/api/tasks/example-update-dataset").status_code == 200
+    assert client.get("/api/gpus").get_json()["bookings"] == []
