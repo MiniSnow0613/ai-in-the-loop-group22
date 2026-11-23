@@ -45,6 +45,11 @@ export function createTask(task) {
   return request("/api/tasks", json("POST", task));
 }
 
+/** Ask the AI (in the background) whether a task needs a GPU and for how long. */
+export function requestGpuEstimate(taskId) {
+  return request(`/api/tasks/${encodeURIComponent(taskId)}/gpu-estimate`, { method: "POST" });
+}
+
 export function deleteTask(taskId) {
   return request(`/api/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
 }

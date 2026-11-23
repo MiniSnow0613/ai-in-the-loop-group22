@@ -77,6 +77,62 @@ function checkSelection(chosen, tasks, boardIds) {
   return { issues, warnings };
 }
 
+/** GPU need of a candidate: the AI's estimate (marked) or the person's edit. */
+function SuggestionGpu({ task, editing, onChange }) {
+  const gpu = task.gpu;
+  const set = (changes) =>
+    onChange(task.id, {
+      gpu: { needed: false, hours: null, reason: "", ...gpu, ...changes, source: "user" },
+    });
+  if (editing) {
+    return (
+      <div className="dep-line suggestion-gpu">
+        <span className="dep-label">GPU</span>
+        <label className="gpu-needed-toggle">
+          <input
+            type="checkbox"
+            checked={Boolean(gpu?.needed)}
+            onChange={(e) => set({ needed: e.target.checked, hours: e.target.checked ? gpu?.hours ?? null : null })}
+          />
+          Needs a GPU
+        </label>
+        {gpu?.needed && (
+          <label className="gpu-needed-toggle">
+            <input
+              type="number"
+              min={0.5}
+              max={336}
+              step={0.5}
+              value={gpu.hours ?? ""}
+              placeholder="?"
+              aria-label={`GPU hours of ${task.id}`}
+              onChange={(e) => set({ hours: e.target.value === "" ? null : Number(e.target.value) })}
+            />
+            hours in total
+          </label>
+        )}
+      </div>
+    );
+  }
+  if (!gpu) return null;
+  const ai = gpu.source === "ai";
+  const text = !gpu.needed
+    ? "No GPU"
+    : gpu.hours == null
+      ? "Needs a GPU · time unknown"
+      : `Needs a GPU · ${ai ? "~" : ""}${gpu.hours}h`;
+  return (
+    <div className="dep-line suggestion-gpu">
+      <span className="dep-label">GPU</span>
+      <span className={`chip ${gpu.needed ? "gpu" : ""}`} title={gpu.reason || undefined}>
+        {text}
+      </span>
+      {ai && <span className="ai-tag">AI estimate</span>}
+      {ai && gpu.reason && <span className="muted">{gpu.reason}</span>}
+    </div>
+  );
+}
+
 /** One previewed candidate task: select it, see its dependencies, or edit it. */
 function SuggestionCard({
   task,
@@ -207,6 +263,7 @@ function SuggestionCard({
           ))}
         </div>
       )}
+      <SuggestionGpu task={task} editing={editing} onChange={onChange} />
     </li>
   );
 }
@@ -272,7 +329,7 @@ function SuggestionMessage({ msg, boardTasks, onAccept, onDiscard, onUpdate }) {
     while (tasks.some((t) => t.id === `T${n}`) || boardIds.has(`T${n}`)) n += 1;
     const id = `T${n}`;
     onUpdate({
-      tasks: [...tasks, { id, title: "", description: "", prerequisites: [] }],
+      tasks: [...tasks, { id, title: "", description: "", prerequisites: [], gpu: null }],
       selected: [...selected, id],
       editing: [...editing, id],
     });
@@ -433,11 +490,12 @@ export default function ChatPanel({ boardTasks = [], onTasksAdded }) {
       push({
         role: "assistant",
         suggestion: {
-          tasks: data.tasks.map(({ id, title, description, prerequisites }) => ({
+          tasks: data.tasks.map(({ id, title, description, prerequisites, gpu }) => ({
             id,
             title,
             description: description || "",
             prerequisites,
+            gpu: gpu || null,
           })),
           selected: data.tasks.map((t) => t.id),
           editing: [],
@@ -462,11 +520,12 @@ export default function ChatPanel({ boardTasks = [], onTasksAdded }) {
       const batchIds = new Set(tasks.map((t) => t.id));
       const chosen = tasks
         .filter((t) => selected.includes(t.id))
-        .map(({ id, title, description, prerequisites }) => ({
+        .map(({ id, title, description, prerequisites, gpu }) => ({
           id,
           title,
           description,
           prerequisites: prerequisites.filter((p) => !batchIds.has(p) || selected.includes(p)),
+          ...(gpu ? { gpu } : {}),
         }));
       const data = await acceptSuggestions(chosen);
       updateSuggestion(msg.id, { state: "added", editing: [] });

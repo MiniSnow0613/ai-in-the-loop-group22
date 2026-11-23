@@ -126,17 +126,55 @@ export function earliestSlot(bookings, gpuIds, preferredId, from, minutes) {
   };
 }
 
+/** 6 -> "6h", 2.5 -> "2.5h". */
+export function formatHours(h) {
+  const v = Math.round(h * 2) / 2;
+  return `${Number.isInteger(v) ? v : v.toFixed(1)}h`;
+}
+
+/** GPU hours not covered by bookings yet, or null when the total is unknown. */
+export function remainingHours(task) {
+  if (task.gpuHours == null) return null;
+  return Math.max(0, task.gpuHours - (task.bookedGpuHours || 0));
+}
+
+export const isAiEstimate = (task) => task.gpuHoursSource === "ai";
+
+/** Minutes for a new booking of this task: what is left of its total, else the default. */
+export function bookingMinutesFor(task, fallback) {
+  const left = task ? remainingHours(task) : null;
+  if (!left) return fallback;
+  return Math.min(14 * 24 * 60, Math.max(30, Math.round(left * 2) * 30));
+}
+
+/** "Needs a GPU · ~6h · AI estimate", "Needs a GPU · 4h left of 10h", … */
+function needText(task) {
+  const ai = isAiEstimate(task);
+  const suffix = ai ? " · AI estimate" : "";
+  if (task.gpuHours == null) return `Needs a GPU · time unknown${suffix}`;
+  const left = remainingHours(task);
+  if (task.bookedGpuHours > 0) return `Needs a GPU · ${formatHours(left)} left of ${formatHours(task.gpuHours)}${suffix}`;
+  return `Needs a GPU · ${ai ? "~" : ""}${formatHours(task.gpuHours)}${suffix}`;
+}
+
 /** The text on a card's GPU band, or null when the card has none. */
 export function cardBand(task) {
+  const open = task.status !== "done";
+  if (open && task.gpuEstimate?.status === "pending") return { kind: "estimating", text: "Estimating GPU need…" };
   const b = task.gpuBooking;
-  if (b) {
+  if (b && ACTIVE_BOOKING.has(b.status)) {
     const kind = bookingKind(b);
     const gpu = shortGpuName(b.gpuName);
-    if (kind === "done") return { kind, text: `${gpu} · Finished` };
     if (kind === "running") return { kind, text: `${gpu} · Running · ${formatRange(b.startAt, b.endAt)}` };
     const text = `${gpu} · ${formatRange(b.startAt, b.endAt)}`;
     return { kind, text: kind === "blocked" ? `${text} · can't start yet` : text };
   }
-  if (task.needsGpu && task.status !== "done") return { kind: "need", text: "Needs a GPU · not booked" };
+  if (open && task.needsGpu && remainingHours(task) !== 0) {
+    return { kind: isAiEstimate(task) ? "need ai" : "need", text: needText(task) };
+  }
+  if (b) return { kind: "done", text: `${shortGpuName(b.gpuName)} · Finished` };
+  if (open && task.gpuEstimate?.status === "failed" && !task.needsGpu) {
+    return { kind: "need", text: "GPU unknown · AI estimate failed" };
+  }
   return null;
 }

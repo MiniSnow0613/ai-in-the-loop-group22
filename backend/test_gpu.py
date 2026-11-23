@@ -159,10 +159,12 @@ def test_booking_waits_for_prerequisites_before_running(client):
     assert client.delete(f"/api/gpu-bookings/{bid}").status_code == 409  # running: finish first
 
 
-def test_one_active_booking_per_task(client):
+def test_task_can_have_several_bookings_and_counts_hours(client):
     gid = schedule(client)["gpus"][0]["id"]
     booking_id(book(client, gid, f"{DAY}T08:00", f"{DAY}T10:00", task_id="example-update-dataset"))
-    assert book(client, gid, f"{DAY}T12:00", f"{DAY}T14:00", task_id="example-update-dataset").status_code == 409
+    resp = book(client, gid, f"{DAY}T12:00", f"{DAY}T15:30", task_id="example-update-dataset")
+    booking_id(resp)
+    assert card(resp.get_json()["board"], "example-update-dataset")["bookedGpuHours"] == 5.5
 
 
 def test_cannot_book_completed_task(client):
@@ -176,9 +178,35 @@ def test_status_transitions(client):
     bid = booking_id(book(client, gid, f"{DAY}T08:00", f"{DAY}T10:00", label="Job"))
     assert client.patch(f"/api/gpu-bookings/{bid}", json={"status": "done"}).status_code == 409
     assert client.patch(f"/api/gpu-bookings/{bid}", json={"status": "running"}).status_code == 200
-    assert client.patch(f"/api/gpu-bookings/{bid}", json={"endAt": f"{DAY}T11:00"}).status_code == 409
+    # A running job can run longer or shorter, but not move.
+    assert client.patch(f"/api/gpu-bookings/{bid}", json={"endAt": f"{DAY}T11:00"}).status_code == 200
+    assert client.patch(f"/api/gpu-bookings/{bid}", json={"startAt": f"{DAY}T09:00"}).status_code == 409
     assert client.patch(f"/api/gpu-bookings/{bid}", json={"status": "done"}).status_code == 200
     assert client.patch(f"/api/gpu-bookings/{bid}", json={"status": "running"}).status_code == 409
+    assert client.patch(f"/api/gpu-bookings/{bid}", json={"endAt": f"{DAY}T12:00"}).status_code == 409
+
+
+def test_running_job_end_cannot_overlap_next_booking(client):
+    gid = schedule(client)["gpus"][0]["id"]
+    bid = booking_id(book(client, gid, f"{DAY}T08:00", f"{DAY}T10:00", label="Job"))
+    booking_id(book(client, gid, f"{DAY}T12:00", f"{DAY}T14:00", label="Next"))
+    client.patch(f"/api/gpu-bookings/{bid}", json={"status": "running"})
+    assert client.patch(f"/api/gpu-bookings/{bid}", json={"endAt": f"{DAY}T13:00"}).status_code == 409
+    assert client.patch(f"/api/gpu-bookings/{bid}", json={"endAt": f"{DAY}T12:00"}).status_code == 200
+
+
+def test_moving_to_another_gpu_checks_that_gpu(client):
+    g0 = schedule(client)["gpus"][0]["id"]
+    g1 = add_gpu(client, "GPU 1")
+    moving = booking_id(book(client, g0, f"{DAY}T08:00", f"{DAY}T10:00", label="Moving"))
+    booking_id(book(client, g1, f"{DAY}T09:00", f"{DAY}T11:00", label="There"))
+    resp = client.patch(f"/api/gpu-bookings/{moving}", json={"gpuId": g1})
+    assert resp.status_code == 409 and "There" in resp.get_json()["error"]
+    resp = client.patch(f"/api/gpu-bookings/{moving}",
+                        json={"gpuId": g1, "startAt": f"{DAY}T11:00", "endAt": f"{DAY}T13:00"})
+    assert resp.status_code == 200
+    moved = next(b for b in resp.get_json()["schedule"]["bookings"] if b["id"] == moving)
+    assert (moved["gpuId"], moved["startAt"], moved["endAt"]) == (g1, f"{DAY}T11:00", f"{DAY}T13:00")
 
 
 def test_needs_gpu_flag(client):

@@ -6,6 +6,9 @@ Rules (deterministic, no AI):
   the next start at 14:00.
 - A job may only start (planned -> running) once the linked task's
   prerequisites are all completed. Booking ahead of that is allowed.
+- A task may have several bookings (its total GPU hours split into runs).
+- A planned booking can move (time and GPU) and change length; a running one
+  can only change its end time; a finished one stays as it is.
 - A GPU with planned or running bookings cannot be deleted, only deactivated.
   A deactivated GPU keeps its bookings but takes no new ones.
 
@@ -156,6 +159,18 @@ def task_bookings(conn):
         ):
             chosen[r["task_id"]] = r
     return {tid: booking_json(r, blocked) for tid, r in chosen.items()}
+
+
+def booked_hours(conn):
+    """{task_id: hours} over planned, running and finished bookings."""
+    totals = {}
+    for r in conn.execute(
+        "SELECT task_id, start_at, end_at FROM gpu_bookings WHERE task_id IS NOT NULL "
+        "AND status IN ('planned', 'running', 'done')"
+    ):
+        span = datetime.strptime(r["end_at"], TIME_FORMAT) - datetime.strptime(r["start_at"], TIME_FORMAT)
+        totals[r["task_id"]] = totals.get(r["task_id"], 0) + span.total_seconds() / 3600
+    return {tid: round(h, 2) for tid, h in totals.items()}
 
 
 def build_schedule(conn):
@@ -383,11 +398,6 @@ def register_gpu_routes(app, db, build_board, now_iso, detector=detect_local_gpu
                 raise GpuError("Task not found.", 404)
             if task["status"] == "done":
                 raise GpuError(f"“{task['title']}” is already completed.", 409)
-            if conn.execute(
-                "SELECT 1 FROM gpu_bookings WHERE task_id = ? AND status IN ('planned', 'running')",
-                (task_id,),
-            ).fetchone():
-                raise GpuError(f"“{task['title']}” already has a GPU booking. Cancel it first.", 409)
             if unfinished_prerequisites(conn, task_id):
                 warning = (f"Booked. “{task['title']}” still has unfinished prerequisites, "
                            "so the job can't start until they are completed.")
@@ -421,8 +431,13 @@ def register_gpu_routes(app, db, build_board, now_iso, detector=detect_local_gpu
         updates = {}
 
         if any(k in body for k in ("gpuId", "startAt", "endAt")):
-            if booking["status"] != "planned":
-                raise GpuError("Only a planned booking can be moved.", 409)
+            if booking["status"] == "done":
+                raise GpuError("A finished booking can't be changed.", 409)
+            if booking["status"] == "running" and (
+                body.get("gpuId", booking["gpu_id"]) != booking["gpu_id"]
+                or ("startAt" in body and parse_time(body["startAt"], "Start time") != booking["start_at"])
+            ):
+                raise GpuError("A running job can only change its end time.", 409)
             gpu_id = body.get("gpuId", booking["gpu_id"])
             gpu = get_gpu(conn, gpu_id)
             if gpu_id != booking["gpu_id"] and not gpu["active"]:
