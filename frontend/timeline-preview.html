@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WeekTimeline preview (mock data)</title>
+    <style>
+      /* Preview-only layout; the real board styles come from styles.css. */
+      body { margin: 0; }
+      .preview-layout { display: flex; flex-direction: column; gap: 12px; padding: 12px; height: 100vh; box-sizing: border-box; }
+      .preview-layout .wt { flex: 1; }
+      .preview-banner { margin: 0; font-size: 0.8rem; color: #7a5200; background: #fff1c2; border-radius: 6px; padding: 4px 10px; align-self: flex-start; }
+      .preview-pool { padding: 10px 14px; }
+      .preview-pool.over { outline: 2px solid var(--accent); background: var(--accent-soft); }
+      .preview-pool h2 { font-size: 0.9rem; margin: 0 0 8px; }
+      .preview-pool-cards { display: flex; flex-wrap: wrap; gap: 8px; }
+      .preview-pool-cards .card { width: 220px; }
+      .preview-log { margin: 0; font-size: 0.8rem; color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/timelinePreview.jsx"></script>
+  </body>
+</html>

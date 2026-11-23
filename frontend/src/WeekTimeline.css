@@ -1,0 +1,63 @@
+/* WeekTimeline.jsx. Uses the colour variables from styles.css. */
+.wt {
+  --wt-axis-w: 76px;
+  --wt-col-min: 160px;
+  --wt-row-h: 76px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.wt-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.wt-head h2 { font-size: 0.95rem; font-weight: 600; margin: 0; }
+.wt-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.wt-nav .btn { padding: 3px 10px; font-size: 0.8rem; }
+.wt-range { font-size: 0.85rem; font-weight: 600; margin-left: 6px; }
+
+.wt-scroll { overflow: auto; flex: 1; }
+.wt-grid { display: grid; grid-template-rows: auto repeat(7, var(--wt-row-h)); min-width: min-content; }
+
+.wt-corner, .wt-member {
+  position: sticky; top: 0; z-index: 2; background: var(--panel);
+  border-bottom: 1px solid var(--line-strong); padding: 8px 10px;
+}
+.wt-member { font-weight: 600; border-left: 1px solid var(--line); }
+
+.wt-date {
+  display: flex; flex-direction: column; justify-content: center; align-items: center;
+  font-size: 0.8rem; color: var(--muted); border-bottom: 1px solid var(--line);
+}
+.wt-dayname { font-weight: 600; color: var(--text); }
+.wt-date.today { color: var(--accent); }
+.wt-date.today .wt-dayname { color: var(--accent); }
+
+/* Each member column is its own grid: 7 day rows x N lanes for overlaps. */
+.wt-column { display: grid; grid-template-rows: repeat(7, var(--wt-row-h)); column-gap: 4px; padding: 0 4px; border-left: 1px solid var(--line); }
+.wt-cell { border-bottom: 1px solid var(--line); margin: 0 -4px; }
+.wt-cell.today { background: var(--accent-soft); }
+.wt.is-dragging .wt-cell { background: #fafcff; }
+.wt.is-dragging .wt-cell.today { background: var(--accent-soft); }
+.wt-cell.over, .wt.is-dragging .wt-cell.over { background: #dbe7fb; box-shadow: inset 0 0 0 2px var(--accent); }
+
+.wt-card {
+  position: relative; z-index: 1; margin: 3px 0; min-width: 0;
+  display: flex; flex-direction: column; gap: 2px; overflow: hidden;
+  text-align: left; font: inherit; color: inherit; cursor: grab;
+  background: var(--panel); border: 1px solid var(--line-strong); border-left: 4px solid var(--dot-waiting);
+  border-radius: var(--radius); padding: 4px 7px;
+}
+.wt-card.ready { border-left-color: var(--dot-ready); }
+.wt-card.done { border-left-color: var(--dot-done); opacity: 0.7; }
+.wt-card:hover { border-color: var(--muted); }
+.wt-card.selected { box-shadow: 0 0 0 2px var(--accent); }
+.wt-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.wt-card.has-warning { background: #fff8e5; }
+.wt-card.has-error { background: #fdecec; border-color: #f3c2c2; }
+/* While something is dragged, drops go to the day cells underneath. */
+.wt.is-dragging .wt-card { pointer-events: none; opacity: 0.75; }
+
+.wt-card-title { font-weight: 600; font-size: 0.85rem; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; }
+.wt-card-meta { font-size: 0.75rem; color: var(--muted); }
+.wt-continues { font-size: 0.7rem; color: var(--muted); }
+.wt-issue { align-self: flex-start; font-size: 0.7rem; font-weight: 600; border-radius: 4px; padding: 0 5px; }
+.wt-issue.warning { color: #7a5200; background: #ffeeb8; }
+.wt-issue.error { color: #9b1c1c; background: #f8d1d1; }
