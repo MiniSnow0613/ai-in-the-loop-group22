@@ -198,3 +198,22 @@ def test_board_issues_reports_stored_conflicts_and_overlaps(board):
     assert codes(issues["train"]) == ["starts_before_prerequisite_ends"]
     assert codes(issues["data"]) == ["member_overlap"] and codes(issues["report"]) == ["member_overlap"]
     assert codes(issues["eval"]) == [] and issues["idea"] == []  # eval itself is unscheduled
+
+
+# ---------- range length and work hours ----------
+
+def test_planned_range_has_a_maximum_length():
+    assert parse_range("2026-01-01", "2026-12-31")  # 365 days
+    with pytest.raises(ScheduleError, match="at most 366 days"):
+        parse_range("2026-01-01", "2027-01-02")  # 367 days
+
+
+@pytest.mark.parametrize("raw, expected", [(6, 6.0), (2.5, 2.5), ("4", 4.0), (0.333, 0.33), (None, None), ("", None)])
+def test_work_hours_value_accepts_positive_numbers(raw, expected):
+    assert schedule.work_hours_value(raw) == expected
+
+
+@pytest.mark.parametrize("raw", [0, -1, 1001, True, "lots", float("nan"), [3]])
+def test_work_hours_value_rejects_others(raw):
+    with pytest.raises(ScheduleError):
+        schedule.work_hours_value(raw)

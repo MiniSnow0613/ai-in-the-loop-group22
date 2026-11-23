@@ -3,7 +3,7 @@
  * relative to the current week so the preview always has something to show.
  * Field names follow the planned API: plannedStart / plannedEnd / workHours.
  */
-import { addDays, startOfWeek, toDateStr } from "./WeekTimeline.jsx";
+import { addDays, startOfWeek, toDateStr } from "./dates.js";
 
 export function makeMockBoard(today = toDateStr(new Date())) {
   const mon = startOfWeek(today);

@@ -2,9 +2,9 @@
 
 The Timeline places a task on the days from planned_start to planned_end
 (inclusive, "YYYY-MM-DD", local dates). These pure functions check a proposed
-change against the board before anything is saved; app.py will call them once
-the schedule columns exist. Nothing here moves other tasks: problems are
-reported and the user decides how to fix them.
+change against the board before anything is saved (PATCH /api/tasks in app.py)
+and list current problems for the cards (build_board). Nothing here moves other
+tasks: problems are reported and the user decides how to fix them.
 
 Rules
 - Dates: both set ("scheduled") or both empty ("unscheduled"); end >= start.
@@ -19,6 +19,7 @@ Rules
 - Warnings only (saving is allowed): a prerequisite is not scheduled yet, and
   one member has open tasks on overlapping days.
 - Clearing a task's dates is always allowed; dependents get a warning.
+- Work hours (human effort) are validated separately and never decide dates.
 
 A task is a dict with: id, title, status ("todo" | "done"), assignee_id,
 planned_start, planned_end, prerequisites (list of task ids). Extra keys are
@@ -28,6 +29,8 @@ import re
 from datetime import date, timedelta
 
 DATE_FORMAT = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+MAX_SPAN_DAYS = 366   # longest planned range, start and end included
+MAX_WORK_HOURS = 1000  # estimated human work; unrelated to the planned dates
 KEEP = object()  # "this field is not part of the change"
 
 ERROR, WARNING = "error", "warning"
@@ -63,7 +66,33 @@ def parse_range(start, end):
         raise ScheduleError("Set both the planned start and end dates, or clear both.")
     if s is not None and e < s:
         raise ScheduleError("The planned end date can't be before the planned start date.")
+    if s is not None and (e - s).days + 1 > MAX_SPAN_DAYS:
+        raise ScheduleError(f"A planned range can be at most {MAX_SPAN_DAYS} days.")
     return s, e
+
+
+def work_hours_value(value):
+    """Estimated human work hours as a float, or None to clear. Raises ScheduleError.
+
+    Work hours never decide the planned dates (and are separate from GPU hours).
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ScheduleError("Work hours must be a number.")
+    if isinstance(value, str):
+        text = value.strip()
+        if text == "":
+            return None
+        try:
+            value = float(text)
+        except ValueError:
+            raise ScheduleError("Work hours must be a number.") from None
+    if not isinstance(value, (int, float)) or value != value:  # NaN
+        raise ScheduleError("Work hours must be a number.")
+    if not 0 < value <= MAX_WORK_HOURS:
+        raise ScheduleError(f"Work hours must be more than 0 and at most {MAX_WORK_HOURS}.")
+    return round(float(value), 2)
 
 
 def _issue(severity, code, message, task_id, related=()):

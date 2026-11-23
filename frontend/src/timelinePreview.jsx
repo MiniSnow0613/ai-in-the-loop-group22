@@ -3,20 +3,21 @@
  *   cd frontend; npm run dev   ->  http://localhost:5173/timeline-preview.html
  * `npm run build` only builds index.html, so this page never ships.
  *
- * Drop rules imitated here (the real ones go through backend/schedule.py):
- * - a task keeps its length when moved; a new one gets ceil(workHours / 8) days, at least 1;
+ * Drop rules, same as App.jsx (the server checks them in backend/schedule.py):
+ * - a new card covers just the dropped day; a moved card keeps its number of days;
+ *   work hours never decide the length;
  * - dropping on the Task Pool clears only the dates (assignee and prerequisites stay).
  * Schedule warnings are static examples from the mock, not recomputed.
  */
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
-import WeekTimeline, { DRAG_TYPE, addDays, daysBetween } from "./WeekTimeline.jsx";
+import WeekTimeline, { DRAG_TYPE } from "./WeekTimeline.jsx";
+import { addDays, daysBetween } from "./dates.js";
 import { makeMockBoard } from "./weekTimelineMock.js";
 import "./styles.css";
 
 function spanDays(task) {
-  if (task.plannedStart && task.plannedEnd) return daysBetween(task.plannedStart, task.plannedEnd) + 1;
-  return task.workHours ? Math.max(1, Math.ceil(task.workHours / 8)) : 1;
+  return task.plannedStart && task.plannedEnd ? daysBetween(task.plannedStart, task.plannedEnd) + 1 : 1;
 }
 
 function Pool({ tasks, members, onClear }) {
