@@ -21,6 +21,5 @@
 **Why:** Routine role rotation / workload balancing.
 
 ## 2026-11-23 — Date-based Timeline (replaces the 2026-11-15 dependency-level layout)
-**What:** The Timeline shows members as columns and calendar dates as rows (7 days, Monday first, with previous/next week). Tasks have nullable `planned_start` / `planned_end` (inclusive) and `work_hours`. A task is on the Timeline only when both dates are set; every unscheduled task, assigned or not, stays in the Task Pool. Dropping a card on a member and day assigns and schedules it in one request (a new card covers one day; a moved card keeps its length); dropping it on the Task Pool clears only its dates. The backend checks every schedule change before saving (`backend/schedule.py`): a task must start after the planned end of each unfinished prerequisite, which also covers prerequisite edits and moving a prerequisite later. Unscheduled prerequisites and overlapping tasks for one member are warnings. Other tasks are never rescheduled automatically.
-**Why:** Dependency levels showed order but not when work happens or who is overloaded. Dates make conflicts visible while still letting people decide how to fix them.
-**Also:** Dependency levels (`row`) are still computed for a future dependency graph view but no longer position cards. Human work hours are separate from GPU hours and never decide the dates; planned dates do not create or change GPU bookings.
+**What:** Replaced dependency-level rows with a date-based Timeline that supports task scheduling, drag-and-drop, resizing, and dependency validation.
+**Why:** Dependency levels showed task order but not actual schedules, so a date-based Timeline helps teams plan work and identify scheduling conflicts.
