@@ -127,11 +127,14 @@ $env:AI_PROVIDER = "openrouter"
 
 上方的 `GPU schedule` 分頁是 GPU 時間表，每張 GPU 一列，顯示一天 00–24 點的預約。同一張 GPU 的預約時段不能重疊，任務卡底部的橘色色條會顯示這張卡的 GPU 預約。初始 Demo 有 `lab-server / GPU 0` 和 `lab-server / GPU 1` 兩張 GPU，沒有任何預約。如果只看到一張 `GPU 0`，表示 Demo 資料庫是在加入 GPU 功能前建立的，先依第 6 節重設即可。
 
-1. 在 Tasks 分頁點開 Member D 的 `Implement GPU time-slot overlap check`，在最下方的 GPU 區塊按 Needs a GPU。卡片底部應出現 `Needs a GPU · not booked`。
-2. 按 Book a GPU，畫面會切到 GPU schedule，New booking 已填好最早的空檔。按 Book 後，時間軸上應出現橘色的預約，卡片底部的色條也會顯示 GPU 和時段。
+1. 在 Tasks 分頁點開 Member D 的 `Implement GPU time-slot overlap check`，在最下方的 GPU 區塊按 Needs a GPU，Total GPU hours 輸入 4 後按 Save。卡片底部應出現 `Needs a GPU · 4h`。
+2. 按 Schedule on GPU，畫面會切到 GPU schedule，時間軸上出現綠色虛線的 4 小時方格，New booking 也已填好最早的空檔。可以拖曳方格換時段或換到另一張 GPU，拖左右邊緣調整長度，表單會跟著更新。按 Book 後，方格變成橘色的預約，卡片底部的色條也會顯示 GPU 和時段。
 3. 在同一列 GPU 上，點第一筆預約開始前一小時的空白處。新預約預設為 2 小時，會和第一筆重疊。Task 選 `Not a board task (other use)`，Used by 輸入「Lab shared job」。畫面應顯示紅色的 `Overlaps` 提示，按 Book 也會被拒絕。按 `Use earliest free slot` 改成最早可用的時段後，再按 Book 即可預約。
 4. 回到 Tasks 分頁，點開 Task Pool 的 `Test and document GPU conflict cases`，依步驟 1、2 預約。因為它還在等 Member D 的卡，色條會是虛線並顯示 `can't start yet`。在時間軸點這筆預約並按 Start job，畫面應列出尚未完成的前置任務。
-5. 在時間軸點步驟 2 的預約，按 Start job，預約會變成深橘色的 `Running`。結束後按 Mark finished。
+5. 把步驟 2 的預約拖到步驟 3 那筆預約的位置後放開。預約應彈回原位，並顯示和哪一筆重疊。拖到空的位置則會直接儲存。
+6. 在時間軸點步驟 2 的預約，按 Start job，預約會變成深橘色的 `Running`。執行中的預約只能拖右邊延長或縮短，結束後按 Mark finished。
+
+設定 API key 後，AI 也會估計任務需不需要 GPU、大約要幾小時。AI Assistant 的候選任務會附上 GPU 估計和紫色的 `AI estimate` 標籤，按 Edit 可以修改。用 + New task 手動新增的任務，會在背景自動請 AI 估計：卡片先顯示 `Estimating GPU need…`，幾秒後改成類似 `Needs a GPU · ~6h · AI estimate` 的內容。在任務的 GPU 區塊可以按 Confirm 採用、按 Edit hours 修改，或按 Ask AI again 重新估計。沒有設定 key 時不會自動估計，可以自己填時數。
 
 右上方的 Manage GPUs 可以新增、改名、停用或刪除 GPU。還有預約的 GPU 只能停用，不能刪除。Detect GPUs on this machine 會在執行 Flask 的電腦上用 `nvidia-smi` 找出 GPU；沒有 NVIDIA GPU 時會顯示找不到 `nvidia-smi`，改用手動新增即可。
 

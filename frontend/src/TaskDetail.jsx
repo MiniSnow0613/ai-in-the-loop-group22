@@ -1,5 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { bookingKind, formatRange, KIND_LABEL } from "./gpuState.js";
+import {
+  ACTIVE_BOOKING,
+  bookingKind,
+  formatHours,
+  formatRange,
+  isAiEstimate,
+  KIND_LABEL,
+  remainingHours,
+} from "./gpuState.js";
 import PrereqPicker from "./PrereqPicker.jsx";
 import { stateKind } from "./taskState.js";
 
@@ -57,51 +65,165 @@ function RelatedSection({ title, items, empty, tasksById, statusLabel, onLocate 
   );
 }
 
-/** The task's GPU booking, with a way into the GPU schedule tab. */
-function GpuSection({ task, onOpenGpu, onSetNeedsGpu }) {
-  const b = task.gpuBooking;
-  const isDone = task.status === "done";
-  const canBookAgain = !isDone && task.needsGpu && (!b || b.status === "done");
-  let body;
-  if (b) {
-    const kind = bookingKind(b);
-    body = (
+/** The AI's answer (marked as an estimate) or the person's own number. */
+function GpuEstimate({ task }) {
+  const est = task.gpuEstimate || {};
+  const ai = isAiEstimate(task);
+  const tag = ai && <span className="ai-tag">AI estimate</span>;
+  const reason = ai && est.reason && <p className="muted gpu-reason">{est.reason}</p>;
+  if (est.status === "pending") return <p className="muted">Asking the AI whether this task needs a GPU…</p>;
+  if (task.needsGpu) {
+    const hours = task.gpuHours == null ? "time unknown" : `${ai ? "~" : ""}${formatHours(task.gpuHours)} in total`;
+    return (
       <>
-        <p className={`gpu-band ${kind} inline`}>
-          {b.gpuName} · {formatRange(b.startAt, b.endAt)}
-        </p>
-        <p className="muted">{KIND_LABEL[kind]}</p>
+        <p>{tag}Needs a GPU · {hours}</p>
+        {reason}
       </>
     );
-  } else if (task.needsGpu && !isDone) {
-    body = <p className="muted">Needs a GPU. Not booked yet.</p>;
-  } else {
-    body = <p className="muted">{isDone ? "No GPU booking." : "No GPU needed."}</p>;
   }
+  if (est.status === "failed") return <p className="msg-error-inline">AI estimate failed: {est.error}</p>;
+  if (ai) {
+    return (
+      <>
+        <p>{tag}No GPU needed</p>
+        {reason}
+      </>
+    );
+  }
+  return <p className="muted">No GPU needed.</p>;
+}
+
+/**
+ * GPU need (AI estimate or set by a person), progress of bookings, and the way
+ * into the GPU schedule tab. A person can confirm the AI's hours, change them,
+ * or ask the AI again.
+ */
+function GpuSection({ task, onOpenGpu, onSaveTask, onEstimateGpu }) {
+  const [editing, setEditing] = useState(false);
+  const [hours, setHours] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const b = task.gpuBooking;
+  const isDone = task.status === "done";
+  const activeBooking = b && ACTIVE_BOOKING.has(b.status);
+  const pending = task.gpuEstimate?.status === "pending";
+  const left = remainingHours(task);
+
+  useEffect(() => {
+    setEditing(false);
+    setError("");
+  }, [task.id]);
+
+  const run = async (fn) => {
+    setBusy(true);
+    setError("");
+    try {
+      await fn();
+      return true;
+    } catch (err) {
+      setError(err.message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const startEdit = () => {
+    setHours(task.gpuHours == null ? "" : String(task.gpuHours));
+    setEditing(true);
+    setError("");
+  };
+
+  const saveHours = async (e) => {
+    e.preventDefault();
+    const value = hours.trim() === "" ? null : Number(hours);
+    if (value !== null && !(value >= 0.5 && value <= 336)) {
+      setError("Enter GPU hours from 0.5 to 336, or leave it empty if you don't know yet.");
+      return;
+    }
+    if (await run(() => onSaveTask(task.id, { gpuHours: value }))) setEditing(false);
+  };
+
   return (
     <section className="related-section gpu-section">
       <h4>GPU</h4>
-      {body}
-      {!isDone && (
+      <GpuEstimate task={task} />
+      {task.needsGpu && task.gpuHours != null && (
+        <p className="muted">
+          Booked {formatHours(task.bookedGpuHours || 0)} of {formatHours(task.gpuHours)}
+          {left > 0 ? ` · ${formatHours(left)} left` : " · fully booked"}
+        </p>
+      )}
+      {task.needsGpu && task.gpuHours == null && task.bookedGpuHours > 0 && (
+        <p className="muted">Booked {formatHours(task.bookedGpuHours)} so far</p>
+      )}
+      {b && (
+        <p className={`gpu-band ${bookingKind(b)} inline`}>
+          {b.gpuName} · {formatRange(b.startAt, b.endAt)} · {KIND_LABEL[bookingKind(b)]}
+        </p>
+      )}
+
+      {editing && (
+        <form className="gpu-hours-form" onSubmit={saveHours}>
+          <label htmlFor="gpu-hours-input">Total GPU hours</label>
+          <input
+            id="gpu-hours-input"
+            type="number"
+            min={0.5}
+            max={336}
+            step={0.5}
+            value={hours}
+            autoFocus
+            placeholder="Unknown"
+            onChange={(e) => setHours(e.target.value)}
+          />
+          <button type="submit" className="btn primary" disabled={busy}>
+            Save
+          </button>
+          <button type="button" className="btn" disabled={busy} onClick={() => setEditing(false)}>
+            Cancel
+          </button>
+        </form>
+      )}
+      {error && (
+        <p className="msg-error-inline" role="alert">
+          {error}
+        </p>
+      )}
+
+      {!isDone && !editing && (
         <div className="gpu-actions">
+          {task.needsGpu && left !== 0 && (
+            <button type="button" className="btn primary" onClick={() => onOpenGpu({ bookTaskId: task.id })}>
+              Schedule on GPU
+            </button>
+          )}
           {b && (
             <button type="button" className="btn" onClick={() => onOpenGpu({ bookingId: b.id })}>
               View in GPU schedule
             </button>
           )}
-          {canBookAgain && (
-            <button type="button" className="btn" onClick={() => onOpenGpu({ bookTaskId: task.id })}>
-              Book a GPU
+          {task.needsGpu && isAiEstimate(task) && task.gpuHours != null && (
+            <button
+              type="button"
+              className="btn"
+              disabled={busy}
+              onClick={() => run(() => onSaveTask(task.id, { gpuHours: task.gpuHours }))}
+            >
+              Confirm {formatHours(task.gpuHours)}
             </button>
           )}
-          {!b && !task.needsGpu && (
-            <button type="button" className="btn" onClick={() => onSetNeedsGpu(task, true)}>
-              Needs a GPU
-            </button>
-          )}
-          {!b && task.needsGpu && (
-            <button type="button" className="btn" onClick={() => onSetNeedsGpu(task, false)}>
+          <button type="button" className="btn" onClick={startEdit}>
+            {task.needsGpu ? "Edit hours" : "Needs a GPU"}
+          </button>
+          {task.needsGpu && !activeBooking && (
+            <button type="button" className="btn" disabled={busy} onClick={() => run(() => onSaveTask(task.id, { needsGpu: false }))}>
               No GPU needed
+            </button>
+          )}
+          {!pending && (
+            <button type="button" className="link-btn" disabled={busy} onClick={() => run(() => onEstimateGpu(task.id))}>
+              {task.gpuEstimate?.status ? "Ask AI again" : "Ask AI to estimate"}
             </button>
           )}
         </div>
@@ -243,6 +365,7 @@ export default function TaskDetail({
   onSetNeedsGpu,
   onSaveTask,
   onDeleteTask,
+  onEstimateGpu,
 }) {
   const ref = useRef(null);
   const [pos, setPos] = useState({ left: -9999, top: -9999 });
@@ -358,7 +481,7 @@ export default function TaskDetail({
         statusLabel={(item, t) => t?.stateText ?? (item.status === "done" ? "Completed" : "Not completed")}
         onLocate={onLocate}
       />
-      <GpuSection task={task} onOpenGpu={onOpenGpu} onSetNeedsGpu={onSetNeedsGpu} />
+      <GpuSection task={task} onOpenGpu={onOpenGpu} onSaveTask={onSaveTask} onEstimateGpu={onEstimateGpu} />
 
       <button
         type="button"
