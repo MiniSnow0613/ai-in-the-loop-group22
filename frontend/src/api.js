@@ -1,6 +1,3 @@
-const AI_OVERRIDE_STORAGE = "group22_ai_override";
-const PASSCODE_STORAGE = "group22_board_passcode";
-
 /** Error from the API, with the server's message and machine-readable code. */
 export class ApiError extends Error {
   constructor(message, { status, code, retryAfter } = {}) {
@@ -11,75 +8,10 @@ export class ApiError extends Error {
   }
 }
 
-export function getAiOverride() {
-  try {
-    const raw = window.localStorage.getItem(AI_OVERRIDE_STORAGE);
-    if (!raw) return { provider: "", apiKey: "" };
-    const parsed = JSON.parse(raw);
-    return {
-      provider: typeof parsed?.provider === "string" ? parsed.provider : "",
-      apiKey: typeof parsed?.apiKey === "string" ? parsed.apiKey : "",
-    };
-  } catch {
-    return { provider: "", apiKey: "" };
-  }
-}
-
-export function setAiOverride({ provider = "", apiKey = "" }) {
-  const clean = { provider: provider.trim(), apiKey: apiKey.trim() };
-  try {
-    if (!clean.provider && !clean.apiKey) {
-      window.localStorage.removeItem(AI_OVERRIDE_STORAGE);
-    } else {
-      window.localStorage.setItem(AI_OVERRIDE_STORAGE, JSON.stringify(clean));
-    }
-  } catch {
-    // Ignore storage quota/privacy mode failures.
-  }
-}
-
-export function clearAiOverride() {
-  setAiOverride({ provider: "", apiKey: "" });
-}
-
-export function getBoardPasscode() {
-  try {
-    return window.localStorage.getItem(PASSCODE_STORAGE) || "";
-  } catch {
-    return "";
-  }
-}
-
-export function setBoardPasscode(passcode) {
-  try {
-    if (passcode) {
-      window.localStorage.setItem(PASSCODE_STORAGE, passcode);
-    } else {
-      window.localStorage.removeItem(PASSCODE_STORAGE);
-    }
-  } catch {
-    // Ignore storage quota/privacy mode failures.
-  }
-}
-
-export function clearBoardPasscode() {
-  setBoardPasscode("");
-}
-
-function buildHeaders(extraHeaders) {
-  const headers = { ...(extraHeaders || {}) };
-  const passcode = getBoardPasscode();
-  if (passcode) headers["X-Board-Passcode"] = passcode;
-  const { provider, apiKey } = getAiOverride();
-  if (provider) headers["X-AI-Provider"] = provider;
-  if (apiKey) headers["X-AI-Key"] = apiKey;
-  return headers;
-}
-
-async function request(url, options = {}) {
+async function request(url, options) {
   let res;
   try {
-    res = await fetch(url, { ...options, headers: buildHeaders(options.headers) });
+    res = await fetch(url, options);
   } catch {
     throw new ApiError("Could not reach the server. Is Flask still running?", { code: "offline" });
   }
@@ -99,14 +31,6 @@ const json = (method, body) => ({
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify(body),
 });
-
-export function fetchAuthStatus() {
-  return request("/api/auth/status");
-}
-
-export function verifyPasscode(passcode) {
-  return request("/api/auth/verify", json("POST", { passcode }));
-}
 
 export function fetchBoard() {
   return request("/api/board");

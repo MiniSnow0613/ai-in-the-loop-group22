@@ -461,113 +461,48 @@ def resolve_provider(environ):
 
 class AiSuggester:
     """Reads AI_PROVIDER and the matching key on every request. Only the
-    selected provider is ever called. Optional per-request overrides (from
-    browser headers) take precedence for that request without mutating server
-    state or persisting keys."""
+    selected provider is ever called."""
 
-    def __init__(self, urlopen=urllib.request.urlopen, environ=os.environ,
-                 override_provider=None, override_api_key=None):
+    def __init__(self, urlopen=urllib.request.urlopen, environ=os.environ):
         self._urlopen = urlopen
         self._environ = environ
-        self._override_provider = (override_provider or "").strip().lower() or None
-        self._override_api_key = (override_api_key or "").strip() or None
-
-    def with_override(self, provider=None, api_key=None):
-        clean_provider = (provider or "").strip().lower() or None
-        clean_key = (api_key or "").strip() or None
-        if not clean_provider and not clean_key:
-            return self
-        return AiSuggester(
-            urlopen=self._urlopen,
-            environ=self._environ,
-            override_provider=clean_provider,
-            override_api_key=clean_key,
-        )
 
     def _api_key(self, provider):
         return (self._environ.get(provider.key_env) or "").strip()
 
-    def _resolve(self):
-        """Return (provider, api_key, config_error, source, host_info)."""
-        host_provider, host_problem = resolve_provider(self._environ)
-        host_key = self._api_key(host_provider) if host_provider else ""
-        host_info = {
-            "hostConfigured": bool(host_provider and host_key),
-            "hostProvider": host_provider.key if host_provider else None,
-            "hostProviderName": host_provider.name if host_provider else None,
-            "hostModel": host_provider.model if host_provider else None,
-        }
-
-        if self._override_provider is None and self._override_api_key is None:
-            return host_provider, host_key, host_problem, "host", host_info
-
-        if self._override_provider is not None:
-            provider = PROVIDERS.get(self._override_provider)
-            if provider is None:
-                options = " or ".join(PROVIDERS)
-                return None, "", f'Unknown provider "{self._override_provider}". Use {options}.', "user", host_info
-            if self._override_api_key:
-                return provider, self._override_api_key, None, "user", host_info
-            if host_provider is not None and provider.key == host_provider.key and host_key:
-                return provider, host_key, None, "host", host_info
-            return provider, "", None, "user", host_info
-
-        # Override API key only -> apply to the host's selected provider.
-        if host_problem:
-            return None, "", host_problem, "user", host_info
-        return host_provider, self._override_api_key, None, "user", host_info
-
     def status(self):
-        """What the AI Assistant panel shows. Never includes any API key."""
-        provider, key, problem, source, host_info = self._resolve()
-        has_override = self._override_provider is not None or self._override_api_key is not None
+        """What the AI Assistant panel shows. Never includes the key itself."""
+        provider, problem = resolve_provider(self._environ)
         if problem:
-            out = {
-                "configured": False,
-                "provider": None,
-                "providerName": None,
-                "model": None,
-                "keyEnv": None,
-                "configError": problem,
-            }
-        else:
-            out = {
-                "configured": bool(key),
-                "provider": provider.key,
-                "providerName": provider.name,
-                "model": provider.model,
-                "keyEnv": provider.key_env,
-            }
-        if has_override:
-            out["source"] = source
-            out.update(host_info)
-        return out
+            return {"configured": False, "provider": None, "providerName": None,
+                    "model": None, "keyEnv": None, "configError": problem}
+        return {
+            "configured": bool(self._api_key(provider)),
+            "provider": provider.key,
+            "providerName": provider.name,
+            "model": provider.model,
+            "keyEnv": provider.key_env,
+        }
 
     @property
     def model(self):
-        provider, _, _, _, _ = self._resolve()
+        provider, _ = resolve_provider(self._environ)
         return provider.model if provider else None
 
     @property
     def provider_name(self):
-        provider, _, _, _, _ = self._resolve()
+        provider, _ = resolve_provider(self._environ)
         return provider.name if provider else None
 
     def configured(self):
         return self.status()["configured"]
 
     def _provider_and_key(self):
-        provider, key, problem, source, _ = self._resolve()
+        provider, problem = resolve_provider(self._environ)
         if problem:
             raise SuggestionError("invalid_provider", problem, 503)
+        key = self._api_key(provider)
         if not key:
-            if source == "user":
-                raise SuggestionError(
-                    "missing_key",
-                    f"Enter your {provider.name} API key in the AI settings box above, "
-                    "or switch back to Host default.",
-                    503,
-                )
             raise SuggestionError(
                 "missing_key",
                 f"The AI assistant is set to use {provider.name} ({PROVIDER_ENV}={provider.key}), but "
@@ -587,4 +522,3 @@ class AiSuggester:
         provider, key = self._provider_and_key()
         content = call_chat(provider, build_gpu_messages(title, description), key, urlopen=self._urlopen)
         return parse_gpu_estimate(content)
-

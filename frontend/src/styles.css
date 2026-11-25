@@ -452,70 +452,6 @@ h1, h2, h3, p { margin: 0; }
 .gpu-manage-row.add { border-top: 1px dashed var(--line-strong); }
 .gpu-manage-row.add input { font: inherit; font-size: 0.85rem; padding: 4px 6px; min-width: 0; width: 100%; border: 1px solid var(--line-strong); border-radius: var(--radius); }
 
-/* ---------- Per-browser AI provider / key box (top of ChatPanel) ---------- */
-.chat .panel-head { flex-wrap: wrap; gap: 6px 8px; }
-.chat .panel-head .status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ai-key-toggle { margin-left: auto; font-size: 0.78rem; }
-.ai-key-box {
-  padding: 8px 12px 9px;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 0.8rem;
-}
-.ai-key-row { display: flex; align-items: center; gap: 6px; }
-.ai-key-row label { flex: 0 0 54px; color: var(--muted); font-size: 0.78rem; }
-.ai-key-row select,
-.ai-key-row input {
-  flex: 1;
-  min-width: 0;
-  font: inherit;
-  font-size: 0.8rem;
-  padding: 3px 6px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  background: var(--panel);
-  color: var(--text);
-}
-.ai-key-hint { margin: 0; font-size: 0.73rem; color: var(--muted); line-height: 1.35; }
-
-/* ---------- Board passcode gate & lock button ---------- */
-.lock-btn { margin-left: auto; padding: 3px 10px; font-size: 0.8rem; }
-.auth-gate {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  background: var(--bg);
-}
-.auth-card {
-  width: min(400px, 100%);
-  background: var(--panel);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
-  padding: 20px 22px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.auth-card h1 { font-size: 1.05rem; margin: 0; }
-.auth-card p { margin: 0; font-size: 0.85rem; }
-.auth-card label { font-size: 0.8rem; color: var(--muted); }
-.auth-card input {
-  font: inherit;
-  font-size: 0.9rem;
-  padding: 6px 9px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  background: var(--panel);
-  color: var(--text);
-}
-.auth-card .btn { align-self: flex-start; }
-
 /* ---------- Narrow screens: stack everything ---------- */
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; height: auto; min-height: 100vh; }
@@ -523,4 +459,3 @@ h1, h2, h3, p { margin: 0; }
   .chat { min-height: 320px; }
   .gpu-lower { grid-template-columns: 1fr; }
 }
-

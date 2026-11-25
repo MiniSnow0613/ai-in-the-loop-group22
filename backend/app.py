@@ -2,7 +2,6 @@
 
 Run:  python app.py   (serves the API, and the built frontend if frontend/dist exists)
 """
-import hmac
 import os
 import sqlite3
 import threading
@@ -13,7 +12,6 @@ from pathlib import Path
 from flask import Flask, abort, g, jsonify, request, send_from_directory
 
 import ai_suggest
-import db_client
 import gpu
 import schedule
 from ai_suggest import AiSuggester, SuggestionError
@@ -137,7 +135,10 @@ def now_iso():
 
 
 def connect(db_path):
-    return db_client.connect(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
 
 
 def task_columns(conn):
@@ -164,8 +165,7 @@ def migrate_legacy_dependencies(conn):
 
 def init_db(db_path):
     """Create/upgrade tables and insert example data exactly once (tracked in meta)."""
-    if not db_client.is_turso_url(str(db_path)):
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     conn = connect(db_path)
     try:
         conn.executescript(SCHEMA)
@@ -492,30 +492,13 @@ def run_in_background(job):
     threading.Thread(target=job, daemon=True).start()
 
 
-def _truthy_env(name):
-    return (os.environ.get(name) or "").strip().lower() in {"1", "true", "yes"}
-
-
-def create_app(db_path=None, suggester=None, gpu_detector=None, gpu_estimate_runner=None,
-               passcode=None, require_passcode=None):
+def create_app(db_path=None, suggester=None, gpu_detector=None, gpu_estimate_runner=None):
     app = Flask(__name__, static_folder=None)
-    app.config["DB_PATH"] = db_client.resolve_db_target(db_path, default_path=DEFAULT_DB_PATH)
+    app.config["DB_PATH"] = str(db_path or os.environ.get("BOARD_DB_PATH") or DEFAULT_DB_PATH)
     # Tests pass a fake suggester; the real one calls the provider set by AI_PROVIDER.
     app.config["SUGGESTER"] = suggester or AiSuggester()
     # Tests run GPU estimates inline; the server runs them on a background thread.
     app.config["GPU_ESTIMATE_RUNNER"] = gpu_estimate_runner or run_in_background
-
-    configured_passcode = (
-        passcode if passcode is not None else os.environ.get("BOARD_PASSCODE", "")
-    ).strip()
-    must_require_passcode = (
-        require_passcode
-        if require_passcode is not None
-        else (_truthy_env("RENDER") or _truthy_env("REQUIRE_PASSCODE"))
-    )
-    app.config["BOARD_PASSCODE"] = configured_passcode
-    app.config["REQUIRE_PASSCODE"] = bool(must_require_passcode)
-
     init_db(app.config["DB_PATH"])
 
     def db():
@@ -528,76 +511,6 @@ def create_app(db_path=None, suggester=None, gpu_detector=None, gpu_estimate_run
         conn = g.pop("db", None)
         if conn is not None:
             conn.close()
-
-    def passcode_matches(candidate):
-        expected = app.config["BOARD_PASSCODE"]
-        if not expected:
-            return not app.config["REQUIRE_PASSCODE"]
-        if not isinstance(candidate, str) or not candidate:
-            return False
-        return hmac.compare_digest(candidate, expected)
-
-    def request_suggester():
-        """Apply optional per-browser provider/key headers without mutating host state."""
-        base = app.config["SUGGESTER"]
-        if not hasattr(base, "with_override"):
-            return base
-        return base.with_override(
-            provider=request.headers.get("X-AI-Provider"),
-            api_key=request.headers.get("X-AI-Key"),
-        )
-
-    @app.before_request
-    def check_passcode():
-        if not request.path.startswith("/api/"):
-            return None
-        if request.path in {"/api/auth/status", "/api/auth/verify"}:
-            return None
-        expected = app.config["BOARD_PASSCODE"]
-        if app.config["REQUIRE_PASSCODE"] and not expected:
-            return (
-                jsonify(
-                    error="Host password required: set BOARD_PASSCODE in the server environment variables.",
-                    code="passcode_not_configured",
-                ),
-                503,
-            )
-        if expected and not passcode_matches(request.headers.get("X-Board-Passcode", "")):
-            return jsonify(error="Enter the board password to continue.", code="passcode_required"), 401
-        return None
-
-    @app.get("/api/auth/status")
-    def auth_status():
-        expected = app.config["BOARD_PASSCODE"]
-        required = bool(app.config["REQUIRE_PASSCODE"] or expected)
-        if app.config["REQUIRE_PASSCODE"] and not expected:
-            return jsonify(
-                required=True,
-                configured=False,
-                authenticated=False,
-                error="Host password required: set BOARD_PASSCODE in the server environment variables.",
-            )
-        authenticated = (not expected) or passcode_matches(request.headers.get("X-Board-Passcode", ""))
-        return jsonify(required=required, configured=True, authenticated=authenticated)
-
-    @app.post("/api/auth/verify")
-    def auth_verify():
-        expected = app.config["BOARD_PASSCODE"]
-        if app.config["REQUIRE_PASSCODE"] and not expected:
-            return (
-                jsonify(
-                    error="Host password required: set BOARD_PASSCODE in the server environment variables.",
-                    code="passcode_not_configured",
-                ),
-                503,
-            )
-        if not expected:
-            return jsonify(ok=True)
-        body = request.get_json(silent=True) or {}
-        candidate = body.get("passcode")
-        if not isinstance(candidate, str) or not passcode_matches(candidate):
-            return jsonify(error="Incorrect password.", code="invalid_passcode"), 401
-        return jsonify(ok=True)
 
     @app.get("/api/board")
     def get_board():
@@ -812,26 +725,24 @@ def create_app(db_path=None, suggester=None, gpu_detector=None, gpu_estimate_run
             conn.rollback()
             return jsonify(error=f"The task was not added: the database rejected it ({e}).", code="db_error"), 500
         # Ask the AI about GPU use in the background; the card shows up right away.
-        req_sug = request_suggester()
-        if can_estimate(req_sug):
-            start_gpu_estimate(conn, id_map["new"], req_sug)
+        if can_estimate():
+            start_gpu_estimate(conn, id_map["new"])
         return jsonify(board=build_board(conn), createdId=id_map["new"]), 201
 
     # ---------- AI GPU estimate for one task (runs in the background) ----------
 
-    def can_estimate(sug=None):
-        suggester = sug if sug is not None else app.config["SUGGESTER"]
+    def can_estimate():
+        suggester = app.config["SUGGESTER"]
         return hasattr(suggester, "estimate_gpu") and suggester.configured()
 
-    def start_gpu_estimate(conn, task_id, sug=None):
-        suggester = sug if sug is not None else app.config["SUGGESTER"]
+    def start_gpu_estimate(conn, task_id):
         conn.execute(
             "UPDATE tasks SET gpu_estimate_status = 'pending', gpu_estimate_error = NULL WHERE id = ?",
             (task_id,),
         )
         conn.commit()
         app.config["GPU_ESTIMATE_RUNNER"](
-            lambda: run_gpu_estimate(app.config["DB_PATH"], suggester, task_id)
+            lambda: run_gpu_estimate(app.config["DB_PATH"], app.config["SUGGESTER"], task_id)
         )
 
     @app.post("/api/tasks/<task_id>/gpu-estimate")
@@ -843,29 +754,17 @@ def create_app(db_path=None, suggester=None, gpu_detector=None, gpu_estimate_run
             abort(404, description="Task not found.")
         if row["status"] == "done":
             return jsonify(error="This task is already completed.", code="task_done"), 409
-        sug = request_suggester()
-        if not hasattr(sug, "estimate_gpu"):
+        if not hasattr(app.config["SUGGESTER"], "estimate_gpu"):
             return jsonify(error="GPU estimates are not available.", code="unavailable"), 503
-        status = sug.status()
+        status = app.config["SUGGESTER"].status()
         if not status.get("configured"):
-            if status.get("configError"):
-                return jsonify(error=status["configError"], code="invalid_provider"), 503
-            if status.get("source") == "user":
-                return (
-                    jsonify(
-                        error=f"Enter your {status.get('providerName') or 'AI'} API key in the AI settings box, "
-                              "or switch back to Host default.",
-                        code="missing_key",
-                    ),
-                    503,
-                )
             key_env = status.get("keyEnv") or "the API key"
             return (
                 jsonify(error=f"The AI assistant has no API key. Set {key_env} and restart the server.",
                         code="missing_key"),
                 503,
             )
-        start_gpu_estimate(conn, task_id, sug)
+        start_gpu_estimate(conn, task_id)
         return jsonify(build_board(conn)), 202
 
     # ---------- AI task suggestions (OpenRouter or Groq, see AI_PROVIDER) ----------
@@ -873,7 +772,7 @@ def create_app(db_path=None, suggester=None, gpu_detector=None, gpu_estimate_run
     @app.get("/api/ai/status")
     def ai_status():
         """Provider, model and whether its key is set. Never returns the key."""
-        return jsonify(request_suggester().status())
+        return jsonify(app.config["SUGGESTER"].status())
 
     @app.post("/api/suggestions")
     def suggest_tasks():
@@ -891,15 +790,14 @@ def create_app(db_path=None, suggester=None, gpu_detector=None, gpu_estimate_run
         board_tasks = [
             dict(r) for r in db().execute("SELECT id, title, status FROM tasks ORDER BY position, id")
         ]
-        sug = request_suggester()
         try:
-            tasks = sug.suggest(description, board_tasks)
+            tasks = app.config["SUGGESTER"].suggest(description, board_tasks)
         except SuggestionError as e:
             return jsonify(e.to_json()), e.http_status
         titles_by_id = {t["id"]: t["title"] for t in board_tasks}
         return jsonify(
-            provider=sug.provider_name,
-            model=sug.model,
+            provider=app.config["SUGGESTER"].provider_name,
+            model=app.config["SUGGESTER"].model,
             tasks=suggestion_preview(tasks, titles_by_id),
             issues=ai_suggest.validate_batch(tasks, titles_by_id),
         )
@@ -999,8 +897,6 @@ def sync_local_env(env_path=LOCAL_ENV_PATH, environ=os.environ):
 
 if __name__ == "__main__":
     sync_local_env()
-    host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "5000"))
-    create_app().run(host=host, port=port, debug=False)
-
+    create_app().run(host="127.0.0.1", port=port, debug=False)
 
