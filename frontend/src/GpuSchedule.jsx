@@ -121,21 +121,73 @@ function Block({ item, day, kind, label, title, selected, dragging, conflict, on
   );
 }
 
-function GpuRow({ gpu, day, blocks, now, onPickTime, renderBlock }) {
+function GpuRow({ gpu, day, blocks, now, busy, onPickTime, onRenameGpu, renderBlock }) {
   const trackRef = useRef(null);
+  const inputRef = useRef(null);
+  const cancelledRef = useRef(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(gpu.name);
   const [host, short] = gpu.name.includes(" / ")
     ? [gpu.name.slice(0, gpu.name.lastIndexOf(" / ")), gpu.name.split(" / ").pop()]
     : [null, gpu.name];
 
+  useEffect(() => {
+    if (editing) inputRef.current?.select();
+  }, [editing]);
+
+  const commit = async () => {
+    if (cancelledRef.current) {
+      cancelledRef.current = false;
+      return;
+    }
+    const next = draft.trim();
+    setEditing(false);
+    if (!next || next === gpu.name) return;
+    await onRenameGpu?.(gpu.id, next);
+  };
+
   return (
     <>
       <div className={`gpu-label ${gpu.active ? "" : "inactive"}`} title={gpu.name}>
-        <strong>{short}</strong>
-        <span className="muted">
-          {[host, gpu.memoryGb ? `${gpu.memoryGb} GB` : null, gpu.active ? null : "Deactivated"]
-            .filter(Boolean)
-            .join(" · ") || " "}
-        </span>
+        {editing ? (
+          <input
+            ref={inputRef}
+            className="gpu-label-input"
+            value={draft}
+            maxLength={80}
+            aria-label={`Rename ${gpu.name}`}
+            disabled={busy}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.currentTarget.blur();
+              } else if (e.key === "Escape") {
+                cancelledRef.current = true;
+                setDraft(gpu.name);
+                setEditing(false);
+              }
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            className="gpu-label-btn"
+            title={`${gpu.name} — Click to rename`}
+            onClick={() => {
+              cancelledRef.current = false;
+              setDraft(gpu.name);
+              setEditing(true);
+            }}
+          >
+            <strong>{short}</strong>
+            <span className="muted">
+              {[host, gpu.memoryGb ? `${gpu.memoryGb} GB` : null, gpu.active ? null : "Deactivated"]
+                .filter(Boolean)
+                .join(" · ") || " "}
+            </span>
+          </button>
+        )}
       </div>
       <div
         ref={trackRef}
@@ -486,13 +538,26 @@ function ManageGpus({ schedule, onApply, onClose }) {
             <div className={`gpu-manage-row ${g.active ? "" : "off"}`} key={g.id}>
               <input
                 key={`${g.id}-${g.name}`}
+                className="centered-name-input"
                 defaultValue={g.name}
                 aria-label="GPU name"
                 maxLength={80}
-                onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.currentTarget.blur();
+                  } else if (e.key === "Escape") {
+                    e.stopPropagation();
+                    e.currentTarget.value = g.name;
+                    e.currentTarget.blur();
+                  }
+                }}
                 onBlur={async (e) => {
                   const input = e.currentTarget;
                   const value = input.value.trim();
+                  if (!value) {
+                    input.value = g.name;
+                    return;
+                  }
                   if (value === g.name) return;
                   if (!(await run(() => updateGpu(g.id, { name: value }), "Saved."))) input.value = g.name;
                 }}
@@ -563,6 +628,7 @@ function ManageGpus({ schedule, onApply, onClose }) {
           }}
         >
           <input
+            className="centered-name-input"
             value={name}
             maxLength={80}
             placeholder="lab-server / GPU 2"
@@ -948,6 +1014,21 @@ export default function GpuSchedule({ board, focus, onBoard, onShowTask }) {
     }
   };
 
+  const handleRenameGpu = async (gpuId, name) => {
+    setBusy(true);
+    setActionError("");
+    setNotice("");
+    try {
+      apply(await updateGpu(gpuId, { name }));
+      setNotice("GPU renamed.");
+    } catch (err) {
+      setActionError(err.message);
+      load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <section className="panel gpu-panel" aria-label="GPU schedule">
       <div className="panel-head">
@@ -998,6 +1079,8 @@ export default function GpuSchedule({ board, focus, onBoard, onShowTask }) {
                 day={day}
                 blocks={blocks.filter((b) => b.gpuId === g.id)}
                 now={now}
+                busy={busy}
+                onRenameGpu={handleRenameGpu}
                 renderBlock={renderBlock}
                 onPickTime={(gpuId, start) => {
                   if (suppressClick.current) return;
@@ -1100,6 +1183,11 @@ export default function GpuSchedule({ board, focus, onBoard, onShowTask }) {
             )}
           </div>
         </div>
+        {!form && !selected && actionError && (
+          <p className="msg-error-inline" role="alert">
+            {actionError}
+          </p>
+        )}
         {notice && <p className="msg info">{notice}</p>}
       </div>
 

@@ -160,6 +160,68 @@ function ScheduledCard({ item, issues, gpu, selected, highlighted, resizing, can
   );
 }
 
+function MemberHeader({ member, onRename }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(member.name);
+  const cancelledRef = useRef(false);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.select();
+  }, [editing]);
+
+  if (!onRename) return member.name;
+
+  const commit = async () => {
+    if (cancelledRef.current) {
+      cancelledRef.current = false;
+      return;
+    }
+    const next = draft.trim();
+    setEditing(false);
+    if (!next || next === member.name) return;
+    await onRename(member.id, next);
+  };
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        className="wt-member-input"
+        value={draft}
+        maxLength={80}
+        aria-label={`Rename ${member.name}`}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.currentTarget.blur();
+          } else if (e.key === "Escape") {
+            cancelledRef.current = true;
+            setDraft(member.name);
+            setEditing(false);
+          }
+        }}
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="wt-member-btn"
+      title="Click to rename"
+      onClick={() => {
+        cancelledRef.current = false;
+        setDraft(member.name);
+        setEditing(true);
+      }}
+    >
+      {member.name}
+    </button>
+  );
+}
+
 /**
  * Props
  *   members         [{ id, name }]
@@ -170,6 +232,8 @@ function ScheduledCard({ item, issues, gpu, selected, highlighted, resizing, can
  *   onDropTask      (taskId, memberId, date) => void
  *   onResizeTask    (taskId, plannedStart, plannedEnd) => void, once per resize
  *   onSelectTask    (taskId, cardRect) => void
+ *   onRenameMember  (memberId, name) => Promise<void>
+ *   onManageMembers () => void
  *   issuesByTask    { taskId: [{ severity, code, message }] }
  *   selectedId      task id to outline
  *   highlightId     task id to flash (e.g. "show this card")
@@ -184,6 +248,8 @@ export default function WeekTimeline({
   onDropTask,
   onResizeTask,
   onSelectTask,
+  onRenameMember,
+  onManageMembers,
   issuesByTask = {},
   selectedId = null,
   highlightId = null,
@@ -346,7 +412,7 @@ export default function WeekTimeline({
           <div className="wt-corner" style={{ gridRow: 1, gridColumn: 1 }} />
           {members.map((m, ci) => (
             <div key={m.id} className="wt-member" style={{ gridRow: 1, gridColumn: ci + 2 }}>
-              {m.name}
+              <MemberHeader member={m} onRename={onRenameMember} />
             </div>
           ))}
 
@@ -408,6 +474,17 @@ export default function WeekTimeline({
           })}
         </div>
       </div>
+      {onManageMembers && (
+        <button
+          type="button"
+          className="wt-member-fab"
+          aria-label="Manage members"
+          title="Add or manage members"
+          onClick={onManageMembers}
+        >
+          +
+        </button>
+      )}
     </section>
   );
 }

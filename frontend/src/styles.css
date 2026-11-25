@@ -345,9 +345,25 @@ h1, h2, h3, p { margin: 0; }
 .gpu-hours span { position: absolute; transform: translateX(-50%); }
 .gpu-hours span.first { transform: none; }
 .gpu-hours span.last { transform: translateX(-100%); }
-.gpu-label { display: flex; flex-direction: column; justify-content: center; padding-right: 10px; min-width: 0; }
-.gpu-label strong { font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gpu-label .muted { font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gpu-label {
+  display: flex; flex-direction: column; justify-content: center; align-items: center;
+  text-align: center; padding-right: 10px; min-width: 0;
+}
+.gpu-label-btn {
+  display: flex; flex-direction: column; align-items: center; width: 100%; min-width: 0;
+  border: 1px solid transparent; border-radius: var(--radius); background: none;
+  font: inherit; color: inherit; text-align: center; padding: 3px 6px; cursor: pointer;
+}
+.gpu-label-btn:hover { background: var(--bg); border-color: var(--line); }
+.gpu-label-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.gpu-label strong { font-size: 0.85rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gpu-label .muted { font-size: 0.75rem; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gpu-label-input {
+  width: 100%; min-width: 0; font: inherit; font-size: 0.85rem; font-weight: 600;
+  text-align: center; color: var(--text); background: var(--panel);
+  border: 1px solid var(--accent); border-radius: var(--radius); padding: 4px 6px;
+}
+.gpu-label-input:focus { outline: 2px solid var(--accent-soft); }
 .gpu-label.inactive { opacity: 0.55; }
 .gpu-track {
   position: relative; height: 40px; cursor: crosshair;
@@ -451,6 +467,47 @@ h1, h2, h3, p { margin: 0; }
 .gpu-manage-row.off input { color: var(--muted); }
 .gpu-manage-row.add { border-top: 1px dashed var(--line-strong); }
 .gpu-manage-row.add input { font: inherit; font-size: 0.85rem; padding: 4px 6px; min-width: 0; width: 100%; border: 1px solid var(--line-strong); border-radius: var(--radius); }
+.centered-name-input { text-align: center; }
+
+/* ---------- Manage Members native <dialog> ---------- */
+dialog.member-modal {
+  margin: 10vh auto auto;
+  width: min(520px, calc(100vw - 24px));
+  max-height: 80vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  padding: 14px 16px;
+}
+dialog.member-modal[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+dialog.member-modal::backdrop {
+  background: rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+.member-modal h1 { font-size: 0.95rem; font-weight: 600; margin: 0; }
+.member-manage { display: flex; flex-direction: column; }
+.member-manage-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 84px auto;
+  gap: 8px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line);
+}
+.member-manage-row.head { border-top: none; padding-top: 0; font-size: 0.75rem; color: var(--muted); }
+.member-manage-row.add { border-top: 1px dashed var(--line-strong); }
+.member-manage-row input {
+  font: inherit; font-size: 0.85rem; padding: 4px 6px; min-width: 0; width: 100%;
+  border: 1px solid var(--line-strong); border-radius: var(--radius);
+  background: var(--panel); color: var(--text);
+}
+.member-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.member-actions .btn { align-self: auto; }
 
 /* ---------- Narrow screens: stack everything ---------- */
 @media (max-width: 900px) {
