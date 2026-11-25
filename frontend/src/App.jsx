@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createTask, deleteTask, fetchBoard, requestGpuEstimate, updateTask } from "./api.js";
+import { createTask, deleteTask, fetchBoard, requestEstimate, requestGpuEstimate, updateTask } from "./api.js";
 import ChatPanel from "./ChatPanel.jsx";
 import GpuSchedule from "./GpuSchedule.jsx";
 import NewTaskForm from "./NewTaskForm.jsx";
@@ -7,6 +7,7 @@ import TaskDetail from "./TaskDetail.jsx";
 import WeekTimeline from "./WeekTimeline.jsx";
 import { addDays, daysBetween, isScheduled, startOfWeek, todayStr } from "./dates.js";
 import { cardBand } from "./gpuState.js";
+import { formatWorkHours, isAiHours, isAiWork, starText } from "./workload.js";
 import { shownIssues } from "./scheduleIssues.js";
 import { stateKind } from "./taskState.js";
 
@@ -29,6 +30,27 @@ function GpuBand({ task }) {
   return (
     <span className={`gpu-band ${band.kind}`} data-testid="gpu-band">
       {band.text}
+    </span>
+  );
+}
+
+/** Work hours and 1-5 star difficulty; AI estimates are marked until a person confirms them. */
+function WorkLine({ task }) {
+  if (task.workEstimate?.status === "pending" && task.workHours == null && !task.difficulty) {
+    return <span className="card-work estimating">Estimating workload…</span>;
+  }
+  if (task.workHours == null && !task.difficulty) return null;
+  const ai = isAiWork(task);
+  return (
+    <span className={`card-work ${ai ? "ai" : ""}`}>
+      {task.workHours != null && `${isAiHours(task) ? "~" : ""}${formatWorkHours(task.workHours)} work`}
+      {task.workHours != null && task.difficulty ? " · " : ""}
+      {task.difficulty && (
+        <span className="card-stars" aria-label={`difficulty ${task.difficulty} of 5`}>
+          {starText(task.difficulty)}
+        </span>
+      )}
+      {ai && <span className="ai-tag card-ai-tag">AI</span>}
     </span>
   );
 }
@@ -60,11 +82,9 @@ function TaskCard({ task, selectedId, highlightId, onSelect, onDragStart, ownerN
         {task.stateText}
       </span>
       {ownerName !== undefined && (
-        <span className="owner-badge">
-          {ownerName ? `Owner: ${ownerName}` : "No owner"}
-          {task.workHours != null && ` · ${task.workHours}h work`}
-        </span>
+        <span className="owner-badge">{ownerName ? `Owner: ${ownerName}` : "No owner"}</span>
       )}
+      <WorkLine task={task} />
       <GpuBand task={task} />
     </button>
   );
@@ -190,8 +210,10 @@ export default function App() {
     return () => clearInterval(timer);
   }, [load]);
 
-  // While the AI is estimating a card's GPU need, check back sooner than the normal poll.
-  const estimating = Boolean(board?.tasks.some((t) => t.gpuEstimate?.status === "pending"));
+  // While the AI is estimating a card's GPU need or workload, check back sooner than the normal poll.
+  const estimating = Boolean(
+    board?.tasks.some((t) => t.gpuEstimate?.status === "pending" || t.workEstimate?.status === "pending")
+  );
   useEffect(() => {
     if (!estimating) return undefined;
     const timer = setInterval(load, ESTIMATE_POLL_MS);
@@ -315,6 +337,12 @@ export default function App() {
   // Errors go back to the GPU section so it can show them.
   const handleEstimateGpu = async (taskId) => {
     setBoard(await requestGpuEstimate(taskId));
+    setError("");
+  };
+
+  // The Workload section asks again for its own part only.
+  const handleEstimate = async (taskId, parts) => {
+    setBoard(await requestEstimate(taskId, parts));
     setError("");
   };
 
@@ -475,6 +503,7 @@ export default function App() {
           onSaveTask={handleSaveTask}
           onDeleteTask={handleDeleteTask}
           onEstimateGpu={handleEstimateGpu}
+          onEstimate={handleEstimate}
         />
       )}
     </div>

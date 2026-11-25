@@ -12,3 +12,5 @@ def no_ai_keys(monkeypatch):
     for provider in ai_suggest.PROVIDERS.values():
         monkeypatch.delenv(provider.key_env, raising=False)
     monkeypatch.delenv(ai_suggest.PROVIDER_ENV, raising=False)
+    # No automatic backfill of AI estimates at app start-up; tests that want it ask for it.
+    monkeypatch.setenv("BOARD_ESTIMATE_BACKLOG", "0")

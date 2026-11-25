@@ -21,6 +21,7 @@ The JSON shape is requested in the prompt rather than through `response_format`
 is validated strictly here.
 """
 import json
+import math
 import os
 import re
 import socket
@@ -73,6 +74,9 @@ TIMEOUT_SECONDS = 60
 MIN_GPU_HOURS = 0.5
 MAX_GPU_HOURS = 336       # 14 days, the longest single GPU booking
 MAX_GPU_REASON = 200
+MIN_WORK_HOURS = 0.5
+MAX_WORK_HOURS = 1000     # same limit as schedule.MAX_WORK_HOURS
+MIN_DIFFICULTY, MAX_DIFFICULTY = 1, 5
 
 # Shown, word for word, whenever the model finds no work to plan in the message
 # ("how are you", "thanks", an unrelated question). Fixed text, so it is the same
@@ -94,13 +98,36 @@ GPU_RULES = """- "gpu": whether the task itself needs GPU compute, and roughly f
     Use null when "needed" is false.
   - "reason": one short phrase explaining the estimate."""
 
+# AI work hours are snapped to this scale (see normalize_work): estimates only need the
+# right size class, and a short list of choices keeps repeated estimates close together.
+WORK_HOUR_SCALE = (1, 2, 4, 8, 16, 32, 64, 128)
+
+# Human effort, kept apart from GPU time: a 10-hour training run may need 1 hour of work.
+WORK_RULES = """- "work": the human effort for the task, separate from any GPU or compute time.
+  - "hours": hours a team member spends working on it. Pick exactly one of
+    1, 2, 4, 8, 16, 32, 64, 128. Do not count time spent only waiting for training,
+    simulation, or other jobs to run.
+  - "difficulty": an integer from 1 to 5 for how hard or uncertain the work is, independent
+    of how long it takes. 1 = routine and familiar, 2 = easy with a clear method,
+    3 = moderate, needs some research or debugging, 4 = hard, new technique or uncertain
+    outcome, 5 = very hard, research-level with high risk.
+  - "reason": one short phrase explaining the estimate.
+  - Reference points for a small research team (hours, difficulty):
+    fix a typo or rename a setting: 1, 1 · write a one-page progress report: 2, 1 ·
+    add a small API endpoint with tests: 4, 2 · label 2,000 images by hand: 32, 1 ·
+    build a new UI page with several parts and tests: 16, 3 ·
+    debug a flaky training run or integrate an unfamiliar library: 16, 4 ·
+    launch and monitor a model training run with an existing script: 2, 2 ·
+    design and validate a new reward function or method: 64, 5."""
+
 SYSTEM_PROMPT = f"""You split a research team's upcoming work into tasks for a shared coordination board.
 
 Reply with JSON only: no prose, no Markdown, no code fences. Use exactly one of these two shapes.
 
 1. The message describes work the team needs to do. Use this shape:
 {{"tasks": [{{"id": "T1", "title": "...", "description": "...", "prerequisites": ["..."],
-  "gpu": {{"needed": true, "hours": 6, "reason": "..."}}}}]}}
+  "gpu": {{"needed": true, "hours": 6, "reason": "..."}},
+  "work": {{"hours": 4, "difficulty": 3, "reason": "..."}}}}]}}
 
 2. The message does not describe any work to plan: a greeting, small talk, thanks, a question
    unrelated to the team's work, or text with no task in it. Do not invent tasks. Reply exactly:
@@ -117,19 +144,24 @@ Rules for shape 1:
   or the exact id of an existing board task from the list the user gives. Use [] if none.
 - Never create circular dependencies.
 {GPU_RULES}
+{WORK_RULES}
 
 Language: write every title, description, and reason in the language of the work
 description, including its script (Traditional Chinese stays Traditional Chinese). The English
 examples above never change the language."""
 
-GPU_ESTIMATE_PROMPT = f"""You estimate whether one task on a research team's coordination board needs GPU compute.
+# One call estimates both the GPU need and the human workload of one task.
+TASK_ESTIMATE_PROMPT = f"""You estimate one task on a research team's coordination board: whether it needs
+GPU compute, and how much human work it takes and how hard it is.
 
 Reply with JSON only: no prose, no Markdown, no code fences. Use exactly this shape:
-{{"gpu": {{"needed": true, "hours": 6, "reason": "..."}}}}
+{{"gpu": {{"needed": true, "hours": 6, "reason": "..."}},
+ "work": {{"hours": 4, "difficulty": 3, "reason": "..."}}}}
 
 Rules:
 {GPU_RULES}
-- Write the reason in the same language as the task."""
+{WORK_RULES}
+- Write the reasons in the same language as the task."""
 
 
 class SuggestionError(Exception):
@@ -164,9 +196,9 @@ def build_messages(description, existing_tasks):
     return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}]
 
 
-def build_gpu_messages(title, description):
+def build_estimate_messages(title, description):
     user = f"Task title: {title}\nTask description: {description or '(none)'}"
-    return [{"role": "system", "content": GPU_ESTIMATE_PROMPT}, {"role": "user", "content": user}]
+    return [{"role": "system", "content": TASK_ESTIMATE_PROMPT}, {"role": "user", "content": user}]
 
 
 # ---------- OpenRouter call ----------
@@ -217,9 +249,14 @@ def _error_detail(body):
         return ""
 
 
-def call_chat(provider, messages, api_key, urlopen=urllib.request.urlopen, timeout=TIMEOUT_SECONDS):
+SUGGEST_TEMPERATURE = 0.2   # task suggestions: a little variety is fine
+ESTIMATE_TEMPERATURE = 0     # estimates: as repeatable as the provider allows
+
+
+def call_chat(provider, messages, api_key, urlopen=urllib.request.urlopen, timeout=TIMEOUT_SECONDS,
+              temperature=SUGGEST_TEMPERATURE):
     """POST to the provider's chat completions endpoint and return the reply text."""
-    payload = json.dumps({"model": provider.model, "messages": messages, "temperature": 0.2}).encode("utf-8")
+    payload = json.dumps({"model": provider.model, "messages": messages, "temperature": temperature}).encode("utf-8")
     req = urllib.request.Request(
         provider.url,
         data=payload,
@@ -346,6 +383,61 @@ def normalize_gpu(value):
     return {"needed": needed, "hours": hours, "reason": reason, "source": source}
 
 
+def _number(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        try:
+            value = float(value.strip())
+        except ValueError:
+            return None
+    if not isinstance(value, (int, float)) or value != value:  # NaN
+        return None
+    return float(value)
+
+
+def work_hours_estimate(value):
+    """Human work hours on a half-hour grid within 0.5-1000, or None."""
+    n = _number(value)
+    if n is None or not MIN_WORK_HOURS <= n <= MAX_WORK_HOURS:
+        return None
+    return max(MIN_WORK_HOURS, round(n * 2) / 2)
+
+
+def difficulty_value(value):
+    """Difficulty as a whole number of stars from 1 to 5, or None."""
+    n = _number(value)
+    if n is None or not MIN_DIFFICULTY <= round(n) <= MAX_DIFFICULTY:
+        return None
+    return int(round(n))
+
+
+def snap_work_hours(hours):
+    """Nearest step of WORK_HOUR_SCALE on a log scale (3 -> 4, 20 -> 16, 300 -> 128)."""
+    return min(WORK_HOUR_SCALE, key=lambda step: abs(math.log(step) - math.log(hours)))
+
+
+def normalize_work(value):
+    """A clean {"hours", "difficulty", "reason", "source"} or None when unusable.
+
+    Lenient like normalize_gpu: a bad "work" field never rejects the batch or
+    the GPU estimate next to it. A bad hours or difficulty value becomes None.
+    AI hours are snapped to WORK_HOUR_SCALE; a person's own hours are kept.
+    """
+    if not isinstance(value, dict):
+        return None
+    hours = work_hours_estimate(value.get("hours"))
+    difficulty = difficulty_value(value.get("difficulty"))
+    if hours is None and difficulty is None:
+        return None
+    reason = value.get("reason")
+    reason = " ".join(reason.split())[:MAX_GPU_REASON] if isinstance(reason, str) else ""
+    source = value.get("source") if value.get("source") in ("ai", "user") else "ai"
+    if hours is not None and source == "ai":
+        hours = snap_work_hours(hours)
+    return {"hours": hours, "difficulty": difficulty, "reason": reason, "source": source}
+
+
 def normalize_tasks(items, error=_bad_format):
     """Check the shape of a candidate batch and return clean dicts.
 
@@ -397,6 +489,9 @@ def normalize_tasks(items, error=_bad_format):
         gpu = normalize_gpu(item.get("gpu"))
         if gpu is not None:  # missing or unusable: the task simply has no estimate
             task["gpu"] = gpu
+        work = normalize_work(item.get("work"))
+        if work is not None:
+            task["work"] = work
         clean.append(task)
     return clean
 
@@ -415,14 +510,26 @@ def parse_suggestions(content):
     return {"tasks": normalize_tasks(data["tasks"]), "reply": None}
 
 
-def parse_gpu_estimate(content):
+def parse_task_estimate(content):
+    """{"gpu": {...} or None, "work": {...} or None} for one task.
+
+    Each part is checked on its own, so a broken "work" keeps a good "gpu" and
+    the other way round. Only when neither part is usable is the answer rejected.
+    """
     data = _extract_json(content)
-    if isinstance(data, dict) and isinstance(data.get("gpu"), dict):
-        data = data["gpu"]  # tolerate the bare object without the "gpu" wrapper too
-    gpu = normalize_gpu(data)
-    if gpu is None:
-        raise _bad_format('"gpu.needed" must be true or false')
-    return {**gpu, "source": "ai"}
+    if not isinstance(data, dict):
+        raise _bad_format("the answer is not a JSON object")
+    gpu_part = data.get("gpu") if isinstance(data.get("gpu"), dict) else None
+    if gpu_part is None and "needed" in data:
+        gpu_part = data  # tolerate a bare GPU object without the "gpu" wrapper
+    gpu = normalize_gpu(gpu_part)
+    work = normalize_work(data.get("work"))
+    if gpu is None and work is None:
+        raise _bad_format('neither "gpu" nor "work" could be read')
+    return {
+        "gpu": {**gpu, "source": "ai"} if gpu else None,
+        "work": {**work, "source": "ai"} if work else None,
+    }
 
 
 def find_cycle(prereqs):
@@ -548,8 +655,9 @@ class AiSuggester:
         content = call_chat(provider, build_messages(description, existing_tasks), key, urlopen=self._urlopen)
         return parse_suggestions(content)
 
-    def estimate_gpu(self, title, description):
-        """{"needed", "hours", "reason", "source": "ai"} for one task."""
+    def estimate_task(self, title, description):
+        """{"gpu": ... or None, "work": ... or None} for one task, from a single call."""
         provider, key = self._provider_and_key()
-        content = call_chat(provider, build_gpu_messages(title, description), key, urlopen=self._urlopen)
-        return parse_gpu_estimate(content)
+        content = call_chat(provider, build_estimate_messages(title, description), key, urlopen=self._urlopen,
+                            temperature=ESTIMATE_TEMPERATURE)
+        return parse_task_estimate(content)

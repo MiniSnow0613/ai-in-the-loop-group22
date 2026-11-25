@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { acceptSuggestions, fetchAiStatus, requestSuggestions } from "./api.js";
 import PrereqPicker from "./PrereqPicker.jsx";
+import { starText } from "./workload.js";
+import { StarPicker } from "./WorkloadSection.jsx";
 
 const ERROR_TITLES = {
   missing_key: "API key missing",
@@ -129,6 +131,56 @@ function SuggestionGpu({ task, editing, onChange }) {
       </span>
       {ai && <span className="ai-tag">AI estimate</span>}
       {ai && gpu.reason && <span className="muted">{gpu.reason}</span>}
+    </div>
+  );
+}
+
+/** Workload of a candidate: work hours and 1-5 star difficulty, AI estimate (marked) or the person's edit. */
+function SuggestionWork({ task, editing, onChange }) {
+  const work = task.work;
+  const set = (changes) =>
+    onChange(task.id, {
+      work: { hours: null, difficulty: null, reason: "", ...work, ...changes, source: "user" },
+    });
+  if (editing) {
+    return (
+      <div className="dep-line suggestion-work">
+        <span className="dep-label">Work</span>
+        <label className="gpu-needed-toggle">
+          <input
+            type="number"
+            min={0.5}
+            max={1000}
+            step={0.5}
+            value={work?.hours ?? ""}
+            placeholder="?"
+            aria-label={`Work hours of ${task.id}`}
+            onChange={(e) => set({ hours: e.target.value === "" ? null : Number(e.target.value) })}
+          />
+          hours
+        </label>
+        <StarPicker value={work?.difficulty ?? null} onChange={(difficulty) => set({ difficulty })} idPrefix={`star-${task.id}`} />
+      </div>
+    );
+  }
+  if (!work) return null;
+  const ai = work.source === "ai";
+  return (
+    <div className={`dep-line suggestion-work ${ai ? "ai" : ""}`}>
+      <span className="dep-label">Work</span>
+      <span title={work.reason || undefined}>
+        {work.hours != null ? `${ai ? "~" : ""}${work.hours}h` : "hours unknown"}
+        {work.difficulty && (
+          <>
+            {" · "}
+            <span className="card-stars" aria-label={`difficulty ${work.difficulty} of 5`}>
+              {starText(work.difficulty)}
+            </span>
+          </>
+        )}
+      </span>
+      {ai && <span className="ai-tag">AI estimate</span>}
+      {ai && work.reason && <span className="muted">{work.reason}</span>}
     </div>
   );
 }
@@ -263,6 +315,7 @@ function SuggestionCard({
           ))}
         </div>
       )}
+      <SuggestionWork task={task} editing={editing} onChange={onChange} />
       <SuggestionGpu task={task} editing={editing} onChange={onChange} />
     </li>
   );
@@ -329,7 +382,7 @@ function SuggestionMessage({ msg, boardTasks, onAccept, onDiscard, onUpdate }) {
     while (tasks.some((t) => t.id === `T${n}`) || boardIds.has(`T${n}`)) n += 1;
     const id = `T${n}`;
     onUpdate({
-      tasks: [...tasks, { id, title: "", description: "", prerequisites: [], gpu: null }],
+      tasks: [...tasks, { id, title: "", description: "", prerequisites: [], gpu: null, work: null }],
       selected: [...selected, id],
       editing: [...editing, id],
     });
@@ -428,7 +481,7 @@ function SuggestionMessage({ msg, boardTasks, onAccept, onDiscard, onUpdate }) {
           </button>
         </div>
       )}
-      {state === "added" && <p className="status ready">Added to the Task Pool.</p>}
+      {state === "added" && <p className="status ok">Added to the Task Pool.</p>}
       {state === "discarded" && <p className="muted">Discarded.</p>}
       {state === "superseded" && <p className="muted">Replaced by a newer suggestion.</p>}
     </div>
@@ -498,12 +551,13 @@ export default function ChatPanel({ boardTasks = [], onTasksAdded }) {
       push({
         role: "assistant",
         suggestion: {
-          tasks: data.tasks.map(({ id, title, description, prerequisites, gpu }) => ({
+          tasks: data.tasks.map(({ id, title, description, prerequisites, gpu, work }) => ({
             id,
             title,
             description: description || "",
             prerequisites,
             gpu: gpu || null,
+            work: work || null,
           })),
           selected: data.tasks.map((t) => t.id),
           editing: [],
@@ -528,12 +582,13 @@ export default function ChatPanel({ boardTasks = [], onTasksAdded }) {
       const batchIds = new Set(tasks.map((t) => t.id));
       const chosen = tasks
         .filter((t) => selected.includes(t.id))
-        .map(({ id, title, description, prerequisites, gpu }) => ({
+        .map(({ id, title, description, prerequisites, gpu, work }) => ({
           id,
           title,
           description,
           prerequisites: prerequisites.filter((p) => !batchIds.has(p) || selected.includes(p)),
           ...(gpu ? { gpu } : {}),
+          ...(work ? { work } : {}),
         }));
       const data = await acceptSuggestions(chosen);
       updateSuggestion(msg.id, { state: "added", editing: [] });
@@ -557,7 +612,7 @@ export default function ChatPanel({ boardTasks = [], onTasksAdded }) {
       : status.configError
         ? { kind: "waiting", text: "Not configured" }
         : configured
-          ? { kind: "ready", text: providerLabel }
+          ? { kind: "ok", text: providerLabel }
           : { kind: "waiting", text: `${status.providerName} · no API key` };
 
   return (

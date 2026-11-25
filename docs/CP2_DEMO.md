@@ -64,11 +64,15 @@ Timeline 依日期排列：每位成員一欄，每列是一天，一次顯示�
 1. 在 Task Pool 的 `Waiting for prerequisites` 找到 `Integrate Chatbot into Task Pool`。初始畫面有 4 張卡在 Task Pool，整合卡應顯示 `Waiting for 2 prerequisites`。
 2. 把整合卡拖到 Member A 本週星期四的格子。它的前置任務 `Connect AI task suggestions` 計畫在星期四結束，後續任務必須在隔天以後開始，所以會被拒絕：上方顯示 `Not saved.` 開頭的訊息並建議最早可開始的日期，卡片留在 Task Pool。
 3. 改拖到 Member A 星期五的格子。新卡片預設只佔放下的那一天，負責人和日期會一起儲存；重新整理後位置不變。
-4. 點開這張卡，在 Scheduling 區塊按 Edit schedule，可以修改負責人、計畫開始和結束日期，以及預估的人力工時。工時只是估計，不會改變日期，也和 GPU 時數分開。若把開始日期改成星期四，表單會顯示原因且不儲存。也可以直接拖曳 Timeline 卡片的上緣或下緣調整開始或結束日期，放開後才儲存；被拒絕時卡片會回到原本的日期。
+4. 點開這張卡，在 Scheduling 區塊按 Edit schedule，可以修改負責人以及計畫開始和結束日期。若把開始日期改成星期四，表單會顯示原因且不儲存。也可以直接拖曳 Timeline 卡片的上緣或下緣調整開始或結束日期，放開後才儲存；被拒絕時卡片會回到原本的日期。
 5. 把 Task Pool 的 `Add prerequisite picker` 也拖到 Member A 的星期五。兩張卡會並排顯示，上方出現 `Saved with warnings`，卡片標示 `Warning`：同一人日期重疊只會警告，不會阻擋。
 6. 點開 Member B 的 `Build task creation API`，按 Mark as completed。整合卡應改成只等待 Member C，顯示 `Waiting for Member C: Connect AI task suggestions`。
 7. 點開 Member C 的 `Connect AI task suggestions`，按 Mark as completed。整合卡應改成 `Ready`，即使 Member D 的 `Implement GPU time-slot overlap check` 仍未完成。完成狀態和計畫日期彼此獨立，標為完成不會移動任何卡片。
 8. 把 Timeline 上的卡拖回 Task Pool，只會清除計畫日期，負責人、前置任務、工時和 GPU 資訊都保留。也可以在 Scheduling 區塊按 Clear schedule。
+
+每張卡也會顯示預估的人力工時和 1–5 顆星的難度，例如 `12h work · ★★★☆☆`；難度和工時彼此獨立，代表這件事有多難、多不確定。成員名稱下方會顯示這位成員本週的總工時和一條長條，方便比較誰的工作比較多；跨週的任務只算落在本週的天數比例。點開卡片，在 Workload 區塊按 Edit 可以修改工時和難度，直接點星星選擇；工時只是估計，不會改變日期，也和 GPU 時數分開。設定 API key 後，AI 會一起估計工時和難度（見第 5 節最後一段），標示為紫色的 `AI estimate`，按 Confirm 採用或 Edit 修改。AI 的工時只會是 1、2、4、8、16、32、64、128 小時其中之一，讓每次估計的結果比較接近。
+
+啟動 Flask 時如果有 API key，還沒估計過的未完成任務會在背景自動補上估計，一張一張進行，每張之間會暫停幾秒，所以全部補完需要一點時間，網頁會自動更新。自動補估只會填空著的欄位：人已經填好的工時、難度或 GPU 設定都不會被改。不想在啟動時自動補估的話，可以先在同一個視窗設定 `$env:BOARD_ESTIMATE_BACKLOG = "0"` 再啟動。
 
 
 可在同一台電腦用 Chrome 和 Edge 開啟同一個 5001 網址。一邊完成前置任務，另一邊約 5 秒後會讀取最新狀態，也可按 F5 確認。GPU 相關卡片是展示資料，第 5 節會用它們試用 GPU 預約。
@@ -142,7 +146,7 @@ $env:AI_PROVIDER = "openrouter"
 5. 把步驟 2 的預約拖到步驟 3 那筆預約的位置後放開。預約應彈回原位，並顯示和哪一筆重疊。拖到空的位置則會直接儲存。
 6. 在時間軸點步驟 2 的預約，按 Start job，預約會變成深橘色的 `Running`。執行中的預約只能拖右邊延長或縮短，結束後按 Mark finished。
 
-設定 API key 後，AI 也會估計任務需不需要 GPU、大約要幾小時。AI Assistant 的候選任務會附上 GPU 估計和紫色的 `AI estimate` 標籤，按 Edit 可以修改。用 + New task 手動新增的任務，會在背景自動請 AI 估計：卡片先顯示 `Estimating GPU need…`，幾秒後改成類似 `Needs a GPU · ~6h · AI estimate` 的內容。在任務的 GPU 區塊可以按 Confirm 採用、按 Edit hours 修改，或按 Ask AI again 重新估計。沒有設定 key 時不會自動估計，可以自己填時數。
+設定 API key 後，AI 也會估計任務需不需要 GPU、大約要幾小時，並在同一次呼叫裡估計人力工時和難度（Workload 區塊）。兩部分分開保存：你先改了其中一部分，AI 晚回來的結果只會填入另一部分。AI Assistant 的候選任務會附上 GPU 估計和紫色的 `AI estimate` 標籤，按 Edit 可以修改。用 + New task 手動新增的任務，會在背景自動請 AI 估計：卡片先顯示 `Estimating GPU need…`，幾秒後改成類似 `Needs a GPU · ~6h · AI estimate` 的內容。在任務的 GPU 區塊可以按 Confirm 採用、按 Edit hours 修改，或按 Ask AI again 重新估計。沒有設定 key 時不會自動估計，可以自己填時數。
 
 右上方的 Manage GPUs 可以新增、改名、停用或刪除 GPU。還有預約的 GPU 只能停用，不能刪除。Detect GPUs on this machine 會在執行 Flask 的電腦上用 `nvidia-smi` 找出 GPU；沒有 NVIDIA GPU 時會顯示找不到 `nvidia-smi`，改用手動新增即可。
 
