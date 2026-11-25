@@ -13,3 +13,7 @@ frontend/dist/
 
 # Local Claude Code preview config (absolute paths)
 .claude/launch.json
+
+# Local environment variables / API keys
+.env
+
