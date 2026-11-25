@@ -11,11 +11,11 @@ docs/PROMPT_TESTS.md. Uses the same prompts and parsers as the app.
 """
 import sys
 
-from ai_suggest import AiSuggester, SuggestionError
+from ai_suggest import OFF_TOPIC_REPLY, AiSuggester, SuggestionError
 from app import sync_local_env
 
 # Suggestions (SYSTEM_PROMPT): (case id, user message, expect tasks?)
-# True: 1-8 candidate tasks. False: no tasks, only a short reply.
+# True: 1-8 candidate tasks. False: no tasks, and the fixed OFF_TOPIC_REPLY.
 SUGGEST_CASES = [
     ("S1", "how are you", False),
     ("S2", "你好", False),
@@ -47,7 +47,7 @@ def check_gpu(expected_needed, hours_range, est):
 
 
 def run_suggest(suggester, cid, message, want_tasks):
-    expected = "1-8 tasks" if want_tasks else "no tasks, a short reply"
+    expected = "1-8 tasks" if want_tasks else "no tasks, the fixed reply"
     try:
         result = suggester.suggest(message, [])
         tasks = result["tasks"]
@@ -55,7 +55,8 @@ def run_suggest(suggester, cid, message, want_tasks):
             lines = [f"{t['id']} {t['title']} <- {t['prerequisites']}" for t in tasks]
             observed = f"{len(tasks)} tasks: " + "; ".join(lines)
         else:
-            observed = f"reply: {result['reply']!r}"
+            fixed = result["reply"] == OFF_TOPIC_REPLY
+            observed = "no tasks, the fixed reply" if fixed else f"no tasks, unexpected reply: {result['reply']!r}"
         verdict = "OK" if bool(tasks) == want_tasks else "MISMATCH"
     except SuggestionError as e:
         observed, verdict = f"error: {e.message}", "ERROR"

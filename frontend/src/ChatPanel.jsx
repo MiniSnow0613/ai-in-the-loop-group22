@@ -481,9 +481,10 @@ export default function ChatPanel({ boardTasks = [], onTasksAdded }) {
       const data = await requestSuggestions(text);
       const source = data.provider ? `${data.provider} · ${data.model}` : data.model;
       // No tasks + a reply: the message was not work to plan (a greeting, an
-      // unrelated question). Show the answer and leave any open preview as is.
+      // unrelated question). The server sends the same fixed introduction every
+      // time; show it and leave any open preview as is.
       if (data.tasks.length === 0 && data.reply) {
-        push({ role: "reply", text: data.reply, source });
+        push({ role: "reply", text: data.reply });
         return;
       }
       // Only the newest preview stays actionable.

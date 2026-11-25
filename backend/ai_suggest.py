@@ -9,7 +9,8 @@ the browser never sees them.
 Flow:
   1. suggest():   ask the model for candidate tasks as JSON, parse and check the
                   shape. Nothing is written to the database. A message that is
-                  not work to plan ("how are you") gets {"tasks": [], "reply"}.
+                  not work to plan ("how are you") gets no tasks and the fixed
+                  OFF_TOPIC_REPLY.
   2. validate_batch(): run again when the user accepts the preview. Checks that
                   every prerequisite exists (in the batch or on the board) and
                   that there are no circular dependencies. app.py then saves the
@@ -66,13 +67,23 @@ PROVIDERS = {
 MAX_TASKS = 10
 MAX_TITLE = 120
 MAX_DESCRIPTION = 500
-MAX_REPLY = 500           # characters of a no-task reply shown in the chat
 MAX_INPUT = 2000         # characters of work description accepted from the user
 MAX_CONTEXT_TASKS = 50    # existing board tasks sent to the model as context
 TIMEOUT_SECONDS = 60
 MIN_GPU_HOURS = 0.5
 MAX_GPU_HOURS = 336       # 14 days, the longest single GPU booking
 MAX_GPU_REASON = 200
+
+# Shown, word for word, whenever the model finds no work to plan in the message
+# ("how are you", "thanks", an unrelated question). Fixed text, so it is the same
+# every time and the same in every language.
+OFF_TOPIC_REPLY = (
+    "Hi! I'm the planning assistant for this team board. I can only help plan your team's work. "
+    "Describe what's coming up, for example \"update the dataset, then retrain the model\", "
+    "and I'll split it into candidate tasks with their prerequisites and estimated GPU hours. "
+    "You review and edit them before anything is added to the Task Pool. Then drag cards onto "
+    "the Timeline to give them an owner and dates, and book GPU time in the GPU schedule."
+)
 
 # Shared by both prompts so the batch and the single-task estimate judge alike.
 GPU_RULES = """- "gpu": whether the task itself needs GPU compute, and roughly for how long.
@@ -92,11 +103,8 @@ Reply with JSON only: no prose, no Markdown, no code fences. Use exactly one of 
   "gpu": {{"needed": true, "hours": 6, "reason": "..."}}}}]}}
 
 2. The message does not describe any work to plan: a greeting, small talk, thanks, a question
-   unrelated to the team's work, or text with no task in it. Do not invent tasks. Use this shape:
-{{"tasks": [], "reply": "..."}}
-   "reply": one to three short, friendly sentences. Answer the message briefly, say that you
-   turn a description of upcoming work into candidate tasks, and give one short example of
-   such a description.
+   unrelated to the team's work, or text with no task in it. Do not invent tasks. Reply exactly:
+{{"tasks": []}}
 
 If the message names any concrete work, even briefly (for example "train the model"), use shape 1.
 
@@ -110,7 +118,7 @@ Rules for shape 1:
 - Never create circular dependencies.
 {GPU_RULES}
 
-Language: write every title, description, reason, and reply in the language of the work
+Language: write every title, description, and reason in the language of the work
 description, including its script (Traditional Chinese stays Traditional Chinese). The English
 examples above never change the language."""
 
@@ -394,17 +402,16 @@ def normalize_tasks(items, error=_bad_format):
 
 
 def parse_suggestions(content):
-    """{"tasks": [...], "reply": None} or, when the message had no work to plan,
-    {"tasks": [], "reply": "..."}. A reply next to real tasks is ignored."""
+    """{"tasks": [...], "reply": None} or, when the model found no work to plan
+    (an empty list), {"tasks": [], "reply": OFF_TOPIC_REPLY}. Any text the model
+    adds itself is ignored, so the off-topic answer is always the same."""
     data = _extract_json(content)
     if isinstance(data, list):  # tolerate a bare list of tasks
         data = {"tasks": data}
     if not isinstance(data, dict) or "tasks" not in data:
         raise _bad_format('the "tasks" list is missing')
-    reply = data.get("reply")
-    reply = reply.strip()[:MAX_REPLY] if isinstance(reply, str) else ""
-    if data["tasks"] in (None, []) and reply:
-        return {"tasks": [], "reply": reply}
+    if data["tasks"] in (None, []):
+        return {"tasks": [], "reply": OFF_TOPIC_REPLY}
     return {"tasks": normalize_tasks(data["tasks"]), "reply": None}
 
 
@@ -535,8 +542,8 @@ class AiSuggester:
         return provider, key
 
     def suggest(self, description, existing_tasks):
-        """{"tasks": [...], "reply": None}, or {"tasks": [], "reply": "..."} when
-        the message is not work to plan (a greeting, an unrelated question)."""
+        """{"tasks": [...], "reply": None}, or {"tasks": [], "reply": OFF_TOPIC_REPLY}
+        when the message is not work to plan (a greeting, an unrelated question)."""
         provider, key = self._provider_and_key()
         content = call_chat(provider, build_messages(description, existing_tasks), key, urlopen=self._urlopen)
         return parse_suggestions(content)
