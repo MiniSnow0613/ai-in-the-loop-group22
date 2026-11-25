@@ -36,6 +36,18 @@ export function fetchBoard() {
   return request("/api/board");
 }
 
+export function createMember(member) {
+  return request("/api/members", json("POST", member));
+}
+
+export function updateMember(memberId, changes) {
+  return request(`/api/members/${encodeURIComponent(memberId)}`, json("PATCH", changes));
+}
+
+export function deleteMember(memberId) {
+  return request(`/api/members/${encodeURIComponent(memberId)}`, { method: "DELETE" });
+}
+
 export function updateTask(taskId, changes) {
   return request(`/api/tasks/${encodeURIComponent(taskId)}`, json("PATCH", changes));
 }

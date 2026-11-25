@@ -377,6 +377,26 @@ def suggestion_preview(tasks, existing_titles):
     ]
 
 
+MAX_MEMBER_NAME = 80
+
+
+def clean_member_name(value):
+    if not isinstance(value, str) or not value.strip():
+        return None, "Enter a member name."
+    name = " ".join(value.split())
+    if len(name) > MAX_MEMBER_NAME:
+        return None, f"The member name is too long (max {MAX_MEMBER_NAME} characters)."
+    return name, None
+
+
+def new_member_id(conn):
+    taken = {r["id"] for r in conn.execute("SELECT id FROM members")}
+    while True:
+        mid = f"member-{uuid.uuid4().hex[:8]}"
+        if mid not in taken:
+            return mid
+
+
 def new_task_id(taken, prefix="ai"):
     while True:
         tid = f"{prefix}-{uuid.uuid4().hex[:8]}"
@@ -515,6 +535,58 @@ def create_app(db_path=None, suggester=None, gpu_detector=None, gpu_estimate_run
     @app.get("/api/board")
     def get_board():
         return jsonify(build_board(db()))
+
+    @app.post("/api/members")
+    def create_member():
+        body = request.get_json(silent=True) or {}
+        name, err = clean_member_name(body.get("name"))
+        if err:
+            return jsonify(error=err), 400
+        conn = db()
+        if conn.execute("SELECT 1 FROM members WHERE LOWER(name) = LOWER(?)", (name,)).fetchone():
+            return jsonify(error=f"A member named “{name}” already exists."), 409
+        member_id = new_member_id(conn)
+        pos = conn.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM members").fetchone()[0]
+        conn.execute("INSERT INTO members (id, name, position) VALUES (?, ?, ?)", (member_id, name, pos))
+        conn.commit()
+        return jsonify(board=build_board(conn), memberId=member_id), 201
+
+    @app.patch("/api/members/<member_id>")
+    def update_member(member_id):
+        conn = db()
+        if conn.execute("SELECT 1 FROM members WHERE id = ?", (member_id,)).fetchone() is None:
+            abort(404, description="Member not found.")
+        body = request.get_json(silent=True) or {}
+        if "name" not in body:
+            return jsonify(error="Nothing to update."), 400
+        name, err = clean_member_name(body.get("name"))
+        if err:
+            return jsonify(error=err), 400
+        if conn.execute(
+            "SELECT 1 FROM members WHERE LOWER(name) = LOWER(?) AND id <> ?",
+            (name, member_id),
+        ).fetchone():
+            return jsonify(error=f"A member named “{name}” already exists."), 409
+        conn.execute("UPDATE members SET name = ? WHERE id = ?", (name, member_id))
+        conn.commit()
+        return jsonify(build_board(conn))
+
+    @app.delete("/api/members/<member_id>")
+    def delete_member(member_id):
+        conn = db()
+        if conn.execute("SELECT 1 FROM members WHERE id = ?", (member_id,)).fetchone() is None:
+            abort(404, description="Member not found.")
+        if conn.execute("SELECT COUNT(*) FROM members").fetchone()[0] <= 1:
+            return jsonify(error="Keep at least one member."), 409
+        conn.execute(
+            """UPDATE tasks
+               SET assignee_id = NULL, planned_start = NULL, planned_end = NULL, updated_at = ?
+               WHERE assignee_id = ?""",
+            (now_iso(), member_id),
+        )
+        conn.execute("DELETE FROM members WHERE id = ?", (member_id,))
+        conn.commit()
+        return jsonify(build_board(conn))
 
     @app.patch("/api/tasks/<task_id>")
     def update_task(task_id):

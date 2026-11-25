@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createTask, deleteTask, fetchBoard, requestGpuEstimate, updateTask } from "./api.js";
+import { createMember, createTask, deleteMember, deleteTask, fetchBoard, requestGpuEstimate, updateMember, updateTask } from "./api.js";
 import ChatPanel from "./ChatPanel.jsx";
 import GpuSchedule from "./GpuSchedule.jsx";
+import ManageMembers from "./ManageMembers.jsx";
 import NewTaskForm from "./NewTaskForm.jsx";
 import TaskDetail from "./TaskDetail.jsx";
 import WeekTimeline from "./WeekTimeline.jsx";
@@ -165,6 +166,7 @@ export default function App() {
   const [view, setView] = useState("tasks"); // "tasks" | "gpu"
   // What the GPU tab should show when opened from a task: { bookingId } or { bookTaskId }.
   const [gpuFocus, setGpuFocus] = useState(null);
+  const [manageMembersOpen, setManageMembersOpen] = useState(false);
   // Date-based Timeline: the visible week, and warnings from the last saved change.
   const today = todayStr();
   const [week, setWeek] = useState(() => startOfWeek(today));
@@ -325,6 +327,31 @@ export default function App() {
     setError("");
   };
 
+  const handleCreateMember = async (name) => {
+    const resp = await createMember({ name });
+    setBoard(resp.board);
+    setError("");
+  };
+
+  const handleRenameMember = async (memberId, name) => {
+    setBoard(await updateMember(memberId, { name }));
+    setError("");
+  };
+
+  const handleInlineRenameMember = async (memberId, name) => {
+    try {
+      await handleRenameMember(memberId, name);
+    } catch (err) {
+      setError(err.message);
+      load();
+    }
+  };
+
+  const handleDeleteMember = async (memberId) => {
+    setBoard(await deleteMember(memberId));
+    setError("");
+  };
+
   const openGpu = (focus) => {
     setSelected(null);
     setView("gpu");
@@ -422,6 +449,8 @@ export default function App() {
               onDropTask={handleTimelineDrop}
               onResizeTask={handleTimelineResize}
               onSelectTask={cardProps.onSelect}
+              onRenameMember={handleInlineRenameMember}
+              onManageMembers={() => setManageMembersOpen(true)}
               issuesByTask={issuesByTask}
               selectedId={selected?.id}
               highlightId={highlightId}
@@ -474,6 +503,17 @@ export default function App() {
           onSaveTask={handleSaveTask}
           onDeleteTask={handleDeleteTask}
           onEstimateGpu={handleEstimateGpu}
+        />
+      )}
+
+      {manageMembersOpen && (
+        <ManageMembers
+          members={board.members}
+          tasks={board.tasks}
+          onCreate={handleCreateMember}
+          onRename={handleRenameMember}
+          onDelete={handleDeleteMember}
+          onClose={() => setManageMembersOpen(false)}
         />
       )}
     </div>
