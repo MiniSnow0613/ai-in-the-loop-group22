@@ -1,0 +1,107 @@
+/* DependencyGraph.jsx. Uses the colour variables from styles.css and the same
+   state colours as the Timeline cards (left border = Ready / Waiting / Completed). */
+.dg-backdrop {
+  position: fixed; inset: 0; z-index: 30; background: rgba(0, 0, 0, 0.25);
+  display: flex; align-items: flex-start; justify-content: center; padding-top: 6vh;
+}
+.dg-modal {
+  width: min(1100px, calc(100vw - 24px)); max-height: 86vh;
+  display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+.dg-head { display: flex; align-items: baseline; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.dg-head h3 { font-size: 0.95rem; font-weight: 600; }
+.dg-head .hint { flex: 1; min-width: 0; }
+
+.dg-legend {
+  display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 8px 14px; list-style: none;
+  font-size: 0.78rem; color: var(--muted); border-bottom: 1px solid var(--line);
+}
+.dg-legend li { display: flex; align-items: center; gap: 6px; }
+.dg-swatch { width: 4px; height: 12px; background: var(--dot-waiting); }
+.dg-swatch.ready { background: var(--dot-ready); }
+.dg-swatch.done { background: var(--dot-done); }
+.dg-line { width: 22px; border-top: 1.5px solid var(--line-strong); }
+.dg-line.pending { border-top-color: var(--text); }
+
+.dg-empty { padding: 24px 14px; color: var(--muted); }
+.dg-scroll { overflow: auto; flex: 1; min-height: 0; }
+.dg-canvas { position: relative; }
+
+.dg-level {
+  position: absolute; font-size: 0.75rem; font-weight: 600; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.dg-edges { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+.dg-edge { fill: none; stroke-width: 1.5; }
+.dg-edge.pending { stroke: var(--text); }
+.dg-edge.finished { stroke: var(--line-strong); }
+.dg-edge.faded { stroke: var(--line); }
+.dg-arrow.pending path { fill: var(--text); }
+.dg-arrow.finished path { fill: var(--line-strong); }
+.dg-arrow.faded path { fill: var(--line); }
+.dg-edge.active, .dg-edge.drawing { stroke: var(--accent); stroke-width: 2; }
+.dg-edge.drawing { stroke-dasharray: 5 4; }
+.dg-arrow.active path { fill: var(--accent); }
+
+.dg-node-wrap { position: absolute; }
+.dg-node {
+  width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  padding: 4px 8px; text-align: left; font: inherit; color: inherit; cursor: pointer;
+  background: var(--panel); border: 1px solid var(--line-strong); border-left: 4px solid var(--dot-waiting);
+  border-radius: var(--radius);
+}
+.dg-node.ready { border-left-color: var(--dot-ready); }
+.dg-node.done { border-left-color: var(--dot-done); }
+.dg-node.done .dg-node-title { color: var(--muted); }
+.dg-node:hover { border-color: var(--muted); }
+.dg-node.ready:hover { border-left-color: var(--dot-ready); }
+.dg-node.done:hover { border-left-color: var(--dot-done); }
+.dg-node:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.dg-node-title { font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dg-node-meta { font-size: 0.74rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Tracing one task: it gets the accent ring, its chain stays, the rest fades. */
+.dg-node.focus { box-shadow: 0 0 0 2px var(--accent); }
+.dg-node.up, .dg-node.down { background: var(--accent-soft); }
+.dg-node.dim { opacity: 0.35; }
+
+/* ---------- Edit mode ---------- */
+.dg-head .dg-edit-btn { align-self: center; padding: 3px 10px; font-size: 0.8rem; }
+
+.dg-message {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
+  padding: 6px 14px; font-size: 0.82rem; border-bottom: 1px solid var(--line);
+}
+.dg-message p + p { margin-top: 2px; }
+.dg-message.error { color: #9b1c1c; background: #fdecec; }
+.dg-message.warning { background: #fff8e5; }
+.dg-message.saved, .dg-message.saving { color: var(--muted); }
+
+/* Lines become clickable through a wider invisible stroke. */
+.dg-canvas.is-editing .dg-edges { pointer-events: none; }
+.dg-edge-hit { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: pointer; }
+.dg-canvas.is-linking .dg-edge-hit { pointer-events: none; }
+
+/* The dot a new link is dragged from. */
+.dg-handle {
+  position: absolute; right: -6px; top: calc(50% - 6px); width: 12px; height: 12px;
+  border-radius: 50%; background: var(--panel); border: 2px solid var(--accent);
+  cursor: crosshair; touch-action: none;
+}
+.dg-handle:hover { background: var(--accent); }
+.dg-canvas.is-linking, .dg-canvas.is-linking .dg-node { cursor: crosshair; }
+.dg-node.drop-no { opacity: 0.35; }
+.dg-node.drop-ok.over { box-shadow: 0 0 0 2px var(--accent); }
+
+.dg-remove {
+  position: absolute; z-index: 3; transform: translate(-50%, -50%);
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1); white-space: nowrap;
+}
+.dg-remove .btn { padding: 2px 8px; font-size: 0.78rem; align-self: center; }
+.dg-remove-text { font-size: 0.8rem; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }

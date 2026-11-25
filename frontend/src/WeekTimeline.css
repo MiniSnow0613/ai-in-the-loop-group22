@@ -15,6 +15,7 @@
 .wt-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .wt-nav .btn { padding: 3px 10px; font-size: 0.8rem; }
 .wt-range { font-size: 0.85rem; font-weight: 600; margin-left: 6px; }
+.wt-head .wt-graph-btn { align-self: center; margin-left: auto; padding: 3px 10px; font-size: 0.8rem; }
 
 .wt-scroll { overflow: auto; flex: 1; }
 .wt-grid { display: grid; grid-template-rows: auto repeat(7, var(--wt-row-h)); min-width: min-content; }

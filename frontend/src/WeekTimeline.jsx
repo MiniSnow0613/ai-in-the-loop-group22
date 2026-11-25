@@ -9,6 +9,7 @@ import {
 } from "./dates.js";
 import { cardIssueLevel, ISSUE_LABEL, issueKind, shownIssues } from "./scheduleIssues.js";
 import { layoutMember } from "./timelineLayout.js";
+import DependencyGraph from "./DependencyGraph.jsx";
 import "./WeekTimeline.css";
 
 /*
@@ -170,6 +171,8 @@ function ScheduledCard({ item, issues, gpu, selected, highlighted, resizing, can
  *   onDropTask      (taskId, memberId, date) => void
  *   onResizeTask    (taskId, plannedStart, plannedEnd) => void, once per resize
  *   onSelectTask    (taskId, cardRect) => void
+ *   onChangePrerequisites  async (taskId, prerequisiteIds) => board data; enables editing in the
+ *                   dependency graph (without it the graph is view-only)
  *   issuesByTask    { taskId: [{ severity, code, message }] }
  *   selectedId      task id to outline
  *   highlightId     task id to flash (e.g. "show this card")
@@ -184,6 +187,7 @@ export default function WeekTimeline({
   onDropTask,
   onResizeTask,
   onSelectTask,
+  onChangePrerequisites,
   issuesByTask = {},
   selectedId = null,
   highlightId = null,
@@ -196,6 +200,7 @@ export default function WeekTimeline({
   const [dragging, setDragging] = useState(false);
   // Edge resize in progress: { taskId, edge, origStart, origEnd, start, end }.
   const [resize, setResize] = useState(null);
+  const [graphOpen, setGraphOpen] = useState(false);
   const guards = { resizePressed: useRef(false), suppressClick: useRef(false) };
   const cleanupRef = useRef(null);
 
@@ -332,7 +337,22 @@ export default function WeekTimeline({
           </button>
           <span className="wt-range" aria-live="polite">{weekLabel(start)}</span>
         </div>
+        <button type="button" className="btn wt-graph-btn" aria-haspopup="dialog" onClick={() => setGraphOpen(true)}>
+          Dependencies
+        </button>
       </div>
+      {graphOpen && (
+        <DependencyGraph
+          tasks={tasks}
+          members={members}
+          onClose={() => setGraphOpen(false)}
+          onOpenTask={(id, rect) => {
+            setGraphOpen(false);
+            onSelectTask?.(id, rect);
+          }}
+          onChangePrerequisites={onChangePrerequisites}
+        />
+      )}
 
       <div className="wt-scroll">
         <div

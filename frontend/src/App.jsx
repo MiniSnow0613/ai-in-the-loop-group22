@@ -422,6 +422,7 @@ export default function App() {
               onDropTask={handleTimelineDrop}
               onResizeTask={handleTimelineResize}
               onSelectTask={cardProps.onSelect}
+              onChangePrerequisites={(taskId, prerequisites) => handleSaveTask(taskId, { prerequisites })}
               issuesByTask={issuesByTask}
               selectedId={selected?.id}
               highlightId={highlightId}
