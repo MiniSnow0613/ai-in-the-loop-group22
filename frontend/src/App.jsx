@@ -3,6 +3,7 @@ import { createTask, deleteTask, fetchBoard, requestGpuEstimate, updateTask } fr
 import ChatPanel from "./ChatPanel.jsx";
 import GpuSchedule from "./GpuSchedule.jsx";
 import NewTaskForm from "./NewTaskForm.jsx";
+import SplitHandle, { loadPanelSizes, savePanelSizes } from "./SplitHandle.jsx";
 import TaskDetail from "./TaskDetail.jsx";
 import WeekTimeline from "./WeekTimeline.jsx";
 import { addDays, daysBetween, isScheduled, startOfWeek, todayStr } from "./dates.js";
@@ -114,39 +115,41 @@ function TaskPool({ tasks, allTasks, dragging, cardProps, onDropTask, onCreateTa
           </button>
         )}
       </div>
-      {adding && (
-        <NewTaskForm boardTasks={allTasks} onCreate={onCreateTask} onClose={() => setAdding(false)} />
-      )}
-      {tasks.length === 0 ? (
-        <div className="pool-row">
-          <p className="empty">Every task is scheduled. Drag a card back here to clear its dates.</p>
-        </div>
-      ) : (
-        <div className="pool-row">
-          {POOL_GROUPS.map(({ kind, label, alwaysShow }) => {
-            const group = tasks.filter((t) => stateKind(t) === kind);
-            if (group.length === 0 && !alwaysShow) return null;
-            return (
-              <div className="pool-group" key={kind} data-pool-group={kind}>
-                <h3 className={`status ${kind}`}>
-                  <i className="dot" aria-hidden="true" />
-                  {label}
-                  <span className="count">{group.length}</span>
-                </h3>
-                <div className="pool-cards">
-                  {group.length === 0 ? (
-                    <p className="empty">None</p>
-                  ) : (
-                    group.map((t) => (
-                      <TaskCard key={t.id} task={t} {...cardProps} ownerName={memberName(t.assigneeId) || null} />
-                    ))
-                  )}
+      <div className="pool-body">
+        {adding && (
+          <NewTaskForm boardTasks={allTasks} onCreate={onCreateTask} onClose={() => setAdding(false)} />
+        )}
+        {tasks.length === 0 ? (
+          <div className="pool-row">
+            <p className="empty">Every task is scheduled. Drag a card back here to clear its dates.</p>
+          </div>
+        ) : (
+          <div className="pool-row">
+            {POOL_GROUPS.map(({ kind, label, alwaysShow }) => {
+              const group = tasks.filter((t) => stateKind(t) === kind);
+              if (group.length === 0 && !alwaysShow) return null;
+              return (
+                <div className="pool-group" key={kind} data-pool-group={kind}>
+                  <h3 className={`status ${kind}`}>
+                    <i className="dot" aria-hidden="true" />
+                    {label}
+                    <span className="count">{group.length}</span>
+                  </h3>
+                  <div className="pool-cards">
+                    {group.length === 0 ? (
+                      <p className="empty">None</p>
+                    ) : (
+                      group.map((t) => (
+                        <TaskCard key={t.id} task={t} {...cardProps} ownerName={memberName(t.assigneeId) || null} />
+                      ))
+                    )}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+              );
+            })}
+          </div>
+        )}
+      </div>
     </section>
   );
 }
@@ -171,6 +174,10 @@ export default function App() {
   // After a save: { kind: "warning", messages } for dependency warnings, else null
   // (same-member overlaps are allowed and not announced).
   const [notice, setNotice] = useState(null);
+  const [panelSizes, setPanelSizes] = useState(() => loadPanelSizes());
+  const [resizingAxis, setResizingAxis] = useState(null); // "x" | "y" | null
+  const layoutRef = useRef(null);
+  const workSplitRef = useRef(null);
 
   const load = useCallback(async () => {
     try {
@@ -358,8 +365,42 @@ export default function App() {
     highlightId,
   };
 
+  const clampChatWidth = (w) => {
+    const total = layoutRef.current?.clientWidth || window.innerWidth;
+    const max = Math.max(260, total - 340);
+    return Math.round(Math.min(max, Math.max(260, w)));
+  };
+
+  const clampPoolHeight = (h) => {
+    const total = workSplitRef.current?.clientHeight || window.innerHeight;
+    const max = Math.max(110, total - 190);
+    return Math.round(Math.min(max, Math.max(110, h)));
+  };
+
+  const commitPanelSizes = (changes) => {
+    setPanelSizes((prev) => {
+      const next = { ...prev, ...changes };
+      savePanelSizes(next);
+      return next;
+    });
+  };
+
+  const currentChatWidth = () => {
+    const chatEl = layoutRef.current?.querySelector(".chat");
+    return chatEl ? chatEl.getBoundingClientRect().width : panelSizes.chatWidth ?? 320;
+  };
+
+  const currentPoolHeight = () => {
+    const poolEl = workSplitRef.current?.querySelector(".pool-panel");
+    return poolEl ? poolEl.getBoundingClientRect().height : panelSizes.poolHeight ?? 190;
+  };
+
   return (
-    <div className="layout">
+    <div
+      ref={layoutRef}
+      className={`layout ${resizingAxis ? `is-resizing-${resizingAxis}` : ""}`}
+      style={panelSizes.chatWidth != null ? { "--chat-w": `${panelSizes.chatWidth}px` } : undefined}
+    >
       <main className="work">
         <header className="topbar">
           <h1>Experiment Coordination Board</h1>
@@ -412,7 +453,11 @@ export default function App() {
         </header>
 
         {view === "tasks" ? (
-          <>
+          <div
+            ref={workSplitRef}
+            className={`work-split ${panelSizes.poolHeight != null ? "has-pool-height" : ""}`}
+            style={panelSizes.poolHeight != null ? { "--pool-h": `${panelSizes.poolHeight}px` } : undefined}
+          >
             <WeekTimeline
               members={board.members}
               tasks={board.tasks}
@@ -427,6 +472,34 @@ export default function App() {
               highlightId={highlightId}
               gpuInfo={cardBand}
             />
+            <SplitHandle
+              orientation="horizontal"
+              label="Resize Timeline and Task Pool"
+              onDragStart={() => {
+                setResizingAxis("y");
+                const start = currentPoolHeight();
+                workSplitRef.current?.classList.add("has-pool-height");
+                workSplitRef.current?.style.setProperty("--pool-h", `${Math.round(start)}px`);
+                return start;
+              }}
+              onDragMove={(startH, deltaY) => {
+                const next = clampPoolHeight(startH - deltaY);
+                workSplitRef.current?.style.setProperty("--pool-h", `${next}px`);
+                return next;
+              }}
+              onDragEnd={(finalH) => {
+                setResizingAxis(null);
+                commitPanelSizes({ poolHeight: clampPoolHeight(finalH) });
+              }}
+              onStep={(deltaY) => {
+                const next = clampPoolHeight(currentPoolHeight() - deltaY);
+                commitPanelSizes({ poolHeight: next });
+              }}
+              onReset={() => {
+                workSplitRef.current?.style.removeProperty("--pool-h");
+                commitPanelSizes({ poolHeight: null });
+              }}
+            />
             <TaskPool
               tasks={unscheduled}
               allTasks={board.tasks}
@@ -436,7 +509,7 @@ export default function App() {
               onCreateTask={handleCreateTask}
               memberName={memberName}
             />
-          </>
+          </div>
         ) : (
           <GpuSchedule
             board={board}
@@ -449,6 +522,34 @@ export default function App() {
           />
         )}
       </main>
+
+      <SplitHandle
+        orientation="vertical"
+        label="Resize Board and AI Assistant"
+        onDragStart={() => {
+          setResizingAxis("x");
+          const start = currentChatWidth();
+          layoutRef.current?.style.setProperty("--chat-w", `${Math.round(start)}px`);
+          return start;
+        }}
+        onDragMove={(startW, deltaX) => {
+          const next = clampChatWidth(startW - deltaX);
+          layoutRef.current?.style.setProperty("--chat-w", `${next}px`);
+          return next;
+        }}
+        onDragEnd={(finalW) => {
+          setResizingAxis(null);
+          commitPanelSizes({ chatWidth: clampChatWidth(finalW) });
+        }}
+        onStep={(deltaX) => {
+          const next = clampChatWidth(currentChatWidth() - deltaX);
+          commitPanelSizes({ chatWidth: next });
+        }}
+        onReset={() => {
+          layoutRef.current?.style.removeProperty("--chat-w");
+          commitPanelSizes({ chatWidth: null });
+        }}
+      />
 
       <ChatPanel
         boardTasks={board.tasks}
