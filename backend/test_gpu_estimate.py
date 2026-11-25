@@ -27,7 +27,7 @@ class FakeEstimator:
                 "model": self.model, "keyEnv": "GROQ_API_KEY"}
 
     def suggest(self, description, existing_tasks):
-        return ai_suggest.normalize_tasks(self.tasks)
+        return {"tasks": ai_suggest.normalize_tasks(self.tasks), "reply": None}
 
     def estimate_gpu(self, title, description):
         self.estimate_calls.append((title, description))

@@ -4,13 +4,29 @@ Cases for the prompts in [`backend/ai_suggest.py`](../backend/ai_suggest.py). Pa
 
 ## How to run
 
-In the window that starts Flask, set the provider and key (see `docs/CP2_DEMO.md` section 4), then run:
+Set the provider and key in the shell (see `docs/CP2_DEMO.md` section 4), or have them saved in `backend/.env`, then run:
 
 ```powershell
 .\backend\.venv\Scripts\python.exe backend\run_prompt_cases.py
 ```
 
-The script prints the expected and observed answer for every case. Copy the observed answers into the table below, with the date and model. Re-run the affected cases after changing a prompt.
+Add case ids or prefixes to run only some cases, for example `run_prompt_cases.py S` or `run_prompt_cases.py S6 G1`. The script waits a few seconds between calls; Groq's free plan still rate-limits a full run, so a case may need to be re-run. The script prints the expected and observed answer for every case. Copy the observed answers into the tables below, with the date and model. Re-run the affected cases after changing a prompt.
+
+## Messages that are not work to plan (`SYSTEM_PROMPT`)
+
+Added because the assistant used to invent tasks for any message, even "how are you". Now the model answers `{"tasks": [], "reply": "..."}` for greetings, thanks and unrelated questions, and the chat shows the reply instead of a task preview. A case passes when tasks are returned exactly when expected. The reply or task titles should be in the language of the message.
+
+| Case | User message | Expected | Observed | Date · model |
+|---|---|---|---|---|
+| S1 | how are you | no tasks, short reply | Reply: "Hi! I can turn a description of upcoming work into tasks. For example: …" | 2026-11-25 · Groq openai/gpt-oss-20b |
+| S2 | 你好 | no tasks, reply in Chinese | Reply in Chinese: 「你好！我會把工作描述拆成任務。舉個例子：…」 (one character came out in Simplified Chinese) | 2026-11-25 · Groq openai/gpt-oss-20b |
+| S3 | 謝謝你的幫忙！ | no tasks, reply in Chinese | Reply: 「不客氣！如果你有任何工作要規劃，請告訴我，我會把它拆成任務。…」 | 2026-11-25 · Groq openai/gpt-oss-20b |
+| S4 | What's the weather in Hsinchu today? | no tasks, short reply | Reply explaining what the assistant does, with an example (did not mention the weather) | 2026-11-25 · Groq openai/gpt-oss-20b |
+| S5 | What can you do? | no tasks, short reply | Reply: "Sure! I can turn a description of upcoming work into tasks. For example: …" | 2026-11-25 · Groq openai/gpt-oss-20b |
+| S6 | 更新資料集，再用新版資料訓練模型 | tasks in Chinese; training depends on the dataset task | 3 tasks: 更新資料集 → 訓練模型 → 評估模型 | 2026-11-25 · Groq openai/gpt-oss-20b |
+| S7 | train the model | tasks (short but concrete work) | 4 tasks: Prepare training data → Train the model → Evaluate the model → Save the trained model | 2026-11-25 · Groq openai/gpt-oss-20b |
+
+Fix recorded during this change: the first version of the prompt added English examples, and S6 then came back with English titles. A stronger language rule ("including its script… The English examples above never change the language") fixed it; three re-runs of S6 gave Chinese titles.
 
 ## GPU estimate (`GPU_ESTIMATE_PROMPT`, and the `gpu` field of `SYSTEM_PROMPT`)
 

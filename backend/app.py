@@ -791,15 +791,18 @@ def create_app(db_path=None, suggester=None, gpu_detector=None, gpu_estimate_run
             dict(r) for r in db().execute("SELECT id, title, status FROM tasks ORDER BY position, id")
         ]
         try:
-            tasks = app.config["SUGGESTER"].suggest(description, board_tasks)
+            result = app.config["SUGGESTER"].suggest(description, board_tasks)
         except SuggestionError as e:
             return jsonify(e.to_json()), e.http_status
+        tasks = result["tasks"]
         titles_by_id = {t["id"]: t["title"] for t in board_tasks}
+        # No tasks + "reply": the message was not work to plan (e.g. "how are you").
         return jsonify(
             provider=app.config["SUGGESTER"].provider_name,
             model=app.config["SUGGESTER"].model,
             tasks=suggestion_preview(tasks, titles_by_id),
             issues=ai_suggest.validate_batch(tasks, titles_by_id),
+            reply=result.get("reply"),
         )
 
     @app.post("/api/suggestions/accept")
