@@ -479,6 +479,13 @@ export default function ChatPanel({ boardTasks = [], onTasksAdded }) {
     setSending(true);
     try {
       const data = await requestSuggestions(text);
+      const source = data.provider ? `${data.provider} · ${data.model}` : data.model;
+      // No tasks + a reply: the message was not work to plan (a greeting, an
+      // unrelated question). Show the answer and leave any open preview as is.
+      if (data.tasks.length === 0 && data.reply) {
+        push({ role: "reply", text: data.reply, source });
+        return;
+      }
       // Only the newest preview stays actionable.
       setMessages((m) =>
         m.map((x) =>
@@ -499,7 +506,7 @@ export default function ChatPanel({ boardTasks = [], onTasksAdded }) {
           })),
           selected: data.tasks.map((t) => t.id),
           editing: [],
-          source: data.provider ? `${data.provider} · ${data.model}` : data.model,
+          source,
           state: "pending",
         },
       });
@@ -612,6 +619,14 @@ export default function ChatPanel({ boardTasks = [], onTasksAdded }) {
               <div key={msg.id} className="msg error" role="alert">
                 <strong>{msg.title}</strong>
                 <p>{msg.text}</p>
+              </div>
+            );
+          }
+          if (msg.role === "reply") {
+            return (
+              <div key={msg.id} className="msg reply" data-testid="ai-reply">
+                {msg.text}
+                {msg.source && <p className="muted source">From {msg.source}</p>}
               </div>
             );
           }

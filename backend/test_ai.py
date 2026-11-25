@@ -33,7 +33,7 @@ class FakeSuggester:
         self.calls.append((description, list(existing_tasks)))
         if self.error:
             raise self.error
-        return ai_suggest.normalize_tasks(self.tasks)
+        return {"tasks": ai_suggest.normalize_tasks(self.tasks), "reply": None}
 
 
 SUGGESTED = [
@@ -317,9 +317,60 @@ def test_openrouter_bad_answers_are_reported(db, body, code):
 
 def test_parse_suggestions_tolerates_wrapped_json():
     text = 'Here you go: {"tasks": [{"id": 1, "title": " Do  it ", "prerequisites": null}]} Thanks!'
-    assert ai_suggest.parse_suggestions(text) == [
-        {"id": "1", "title": "Do it", "description": "", "prerequisites": []}
-    ]
+    assert ai_suggest.parse_suggestions(text) == {
+        "tasks": [{"id": "1", "title": "Do it", "description": "", "prerequisites": []}],
+        "reply": None,
+    }
+
+
+# ---------- messages that are not work to plan ("how are you") ----------
+
+OFF_TOPIC_REPLY = "I'm doing well, thanks! Describe upcoming work, e.g. \"update the dataset, then retrain\"."
+
+
+def test_off_topic_message_gets_a_reply_and_no_tasks(db):
+    content = json.dumps({"tasks": [], "reply": OFF_TOPIC_REPLY})
+    client = real(db, urlopen=fake_urlopen(completion(content)))
+    before = snapshot(db)
+    resp = client.post("/api/suggestions", json={"description": "how are you"})
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["tasks"] == [] and data["issues"] == []
+    assert data["reply"] == OFF_TOPIC_REPLY
+    assert snapshot(db) == before
+
+
+def test_work_description_has_no_reply(db):
+    client = real(db, urlopen=fake_urlopen(completion(json.dumps({"tasks": SUGGESTED}))))
+    data = client.post("/api/suggestions", json={"description": "plan"}).get_json()
+    assert len(data["tasks"]) == 3 and data["reply"] is None
+
+
+@pytest.mark.parametrize(
+    "payload, expected",
+    [
+        ({"tasks": None, "reply": "  Hi!  "}, {"tasks": [], "reply": "Hi!"}),
+        # A reply next to real tasks is ignored: the tasks are the answer.
+        ({"tasks": [{"id": "T1", "title": "A"}], "reply": "Hi"},
+         {"tasks": [{"id": "T1", "title": "A", "description": "", "prerequisites": []}], "reply": None}),
+        ({"tasks": [], "reply": "x" * 900}, {"tasks": [], "reply": "x" * ai_suggest.MAX_REPLY}),
+    ],
+)
+def test_parse_suggestions_reply_variants(payload, expected):
+    assert ai_suggest.parse_suggestions(json.dumps(payload)) == expected
+
+
+@pytest.mark.parametrize("payload", [{"tasks": []}, {"tasks": [], "reply": "   "}, {"tasks": [], "reply": 3}])
+def test_empty_tasks_without_a_reply_is_bad_format(payload):
+    with pytest.raises(SuggestionError) as err:
+        ai_suggest.parse_suggestions(json.dumps(payload))
+    assert err.value.code == "bad_format"
+
+
+def test_prompt_asks_for_a_reply_instead_of_invented_tasks():
+    prompt = ai_suggest.SYSTEM_PROMPT
+    assert '{"tasks": [], "reply": "..."}' in prompt
+    assert "Do not invent tasks" in prompt
 
 
 # ---------- provider selection: AI_PROVIDER=openrouter (default) or groq ----------

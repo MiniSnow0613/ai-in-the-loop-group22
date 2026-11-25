@@ -22,6 +22,8 @@ The prompt sent to the model is `SYSTEM_PROMPT` in [`backend/ai_suggest.py`](bac
 
 The prompt requests JSON with 1–8 candidate tasks. Each task has an `id`, `title`, `description`, and `prerequisites`. Prerequisite IDs must refer to another candidate or an existing board task. Titles and descriptions should use the same language as the user's work description.
 
+When the message is not work to plan (a greeting, thanks, an unrelated question), the model returns `{"tasks": [], "reply": "..."}` instead of inventing tasks. `/api/suggestions` passes `reply` through, and the AI Assistant shows it as a chat message with no preview.
+
 ## Verification
 
 - For backend changes, run `python -m pytest backend` from the repo root with the backend environment active.

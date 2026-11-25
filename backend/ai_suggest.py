@@ -8,7 +8,8 @@ the browser never sees them.
 
 Flow:
   1. suggest():   ask the model for candidate tasks as JSON, parse and check the
-                  shape. Nothing is written to the database.
+                  shape. Nothing is written to the database. A message that is
+                  not work to plan ("how are you") gets {"tasks": [], "reply"}.
   2. validate_batch(): run again when the user accepts the preview. Checks that
                   every prerequisite exists (in the batch or on the board) and
                   that there are no circular dependencies. app.py then saves the
@@ -65,7 +66,8 @@ PROVIDERS = {
 MAX_TASKS = 10
 MAX_TITLE = 120
 MAX_DESCRIPTION = 500
-MAX_INPUT = 2000          # characters of work description accepted from the user
+MAX_REPLY = 500           # characters of a no-task reply shown in the chat
+MAX_INPUT = 2000         # characters of work description accepted from the user
 MAX_CONTEXT_TASKS = 50    # existing board tasks sent to the model as context
 TIMEOUT_SECONDS = 60
 MIN_GPU_HOURS = 0.5
@@ -83,11 +85,22 @@ GPU_RULES = """- "gpu": whether the task itself needs GPU compute, and roughly f
 
 SYSTEM_PROMPT = f"""You split a research team's upcoming work into tasks for a shared coordination board.
 
-Reply with JSON only: no prose, no Markdown, no code fences. Use exactly this shape:
+Reply with JSON only: no prose, no Markdown, no code fences. Use exactly one of these two shapes.
+
+1. The message describes work the team needs to do. Use this shape:
 {{"tasks": [{{"id": "T1", "title": "...", "description": "...", "prerequisites": ["..."],
   "gpu": {{"needed": true, "hours": 6, "reason": "..."}}}}]}}
 
-Rules:
+2. The message does not describe any work to plan: a greeting, small talk, thanks, a question
+   unrelated to the team's work, or text with no task in it. Do not invent tasks. Use this shape:
+{{"tasks": [], "reply": "..."}}
+   "reply": one to three short, friendly sentences. Answer the message briefly, say that you
+   turn a description of upcoming work into candidate tasks, and give one short example of
+   such a description.
+
+If the message names any concrete work, even briefly (for example "train the model"), use shape 1.
+
+Rules for shape 1:
 - Return 1 to 8 tasks.
 - "id": a short temporary id that is unique within this reply (T1, T2, ...).
 - "title": at most 80 characters, starting with a verb.
@@ -96,7 +109,10 @@ Rules:
   or the exact id of an existing board task from the list the user gives. Use [] if none.
 - Never create circular dependencies.
 {GPU_RULES}
-- Write titles, descriptions, and reasons in the same language as the user's work description."""
+
+Language: write every title, description, reason, and reply in the language of the work
+description, including its script (Traditional Chinese stays Traditional Chinese). The English
+examples above never change the language."""
 
 GPU_ESTIMATE_PROMPT = f"""You estimate whether one task on a research team's coordination board needs GPU compute.
 
@@ -378,12 +394,18 @@ def normalize_tasks(items, error=_bad_format):
 
 
 def parse_suggestions(content):
+    """{"tasks": [...], "reply": None} or, when the message had no work to plan,
+    {"tasks": [], "reply": "..."}. A reply next to real tasks is ignored."""
     data = _extract_json(content)
     if isinstance(data, list):  # tolerate a bare list of tasks
         data = {"tasks": data}
     if not isinstance(data, dict) or "tasks" not in data:
         raise _bad_format('the "tasks" list is missing')
-    return normalize_tasks(data["tasks"])
+    reply = data.get("reply")
+    reply = reply.strip()[:MAX_REPLY] if isinstance(reply, str) else ""
+    if data["tasks"] in (None, []) and reply:
+        return {"tasks": [], "reply": reply}
+    return {"tasks": normalize_tasks(data["tasks"]), "reply": None}
 
 
 def parse_gpu_estimate(content):
@@ -513,6 +535,8 @@ class AiSuggester:
         return provider, key
 
     def suggest(self, description, existing_tasks):
+        """{"tasks": [...], "reply": None}, or {"tasks": [], "reply": "..."} when
+        the message is not work to plan (a greeting, an unrelated question)."""
         provider, key = self._provider_and_key()
         content = call_chat(provider, build_messages(description, existing_tasks), key, urlopen=self._urlopen)
         return parse_suggestions(content)
