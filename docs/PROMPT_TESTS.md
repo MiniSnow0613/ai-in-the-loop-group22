@@ -14,19 +14,21 @@ Add case ids or prefixes to run only some cases, for example `run_prompt_cases.p
 
 ## Messages that are not work to plan (`SYSTEM_PROMPT`)
 
-Added because the assistant used to invent tasks for any message, even "how are you". Now the model answers `{"tasks": [], "reply": "..."}` for greetings, thanks and unrelated questions, and the chat shows the reply instead of a task preview. A case passes when tasks are returned exactly when expected. The reply or task titles should be in the language of the message.
+Added because the assistant used to invent tasks for any message, even "how are you". For greetings, thanks and unrelated questions the model now answers `{"tasks": []}`, and the backend shows the fixed English introduction `OFF_TOPIC_REPLY` (in `backend/ai_suggest.py`) instead of a task preview. The model never writes this text, so it is the same every time, whatever language the message is in. A case passes when tasks are returned exactly when expected.
 
 | Case | User message | Expected | Observed | Date · model |
 |---|---|---|---|---|
-| S1 | how are you | no tasks, short reply | Reply: "Hi! I can turn a description of upcoming work into tasks. For example: …" | 2026-11-25 · Groq openai/gpt-oss-20b |
-| S2 | 你好 | no tasks, reply in Chinese | Reply in Chinese: 「你好！我會把工作描述拆成任務。舉個例子：…」 (one character came out in Simplified Chinese) | 2026-11-25 · Groq openai/gpt-oss-20b |
-| S3 | 謝謝你的幫忙！ | no tasks, reply in Chinese | Reply: 「不客氣！如果你有任何工作要規劃，請告訴我，我會把它拆成任務。…」 | 2026-11-25 · Groq openai/gpt-oss-20b |
-| S4 | What's the weather in Hsinchu today? | no tasks, short reply | Reply explaining what the assistant does, with an example (did not mention the weather) | 2026-11-25 · Groq openai/gpt-oss-20b |
-| S5 | What can you do? | no tasks, short reply | Reply: "Sure! I can turn a description of upcoming work into tasks. For example: …" | 2026-11-25 · Groq openai/gpt-oss-20b |
-| S6 | 更新資料集，再用新版資料訓練模型 | tasks in Chinese; training depends on the dataset task | 3 tasks: 更新資料集 → 訓練模型 → 評估模型 | 2026-11-25 · Groq openai/gpt-oss-20b |
-| S7 | train the model | tasks (short but concrete work) | 4 tasks: Prepare training data → Train the model → Evaluate the model → Save the trained model | 2026-11-25 · Groq openai/gpt-oss-20b |
+| S1 | how are you | no tasks, the fixed reply | no tasks, the fixed reply | 2026-11-25 · Groq openai/gpt-oss-20b |
+| S2 | 你好 | no tasks, the fixed reply | no tasks, the fixed reply | 2026-11-25 · Groq openai/gpt-oss-20b |
+| S3 | 謝謝你的幫忙！ | no tasks, the fixed reply | no tasks, the fixed reply | 2026-11-25 · Groq openai/gpt-oss-20b |
+| S4 | What's the weather in Hsinchu today? | no tasks, the fixed reply | no tasks, the fixed reply | 2026-11-25 · Groq openai/gpt-oss-20b |
+| S5 | What can you do? | no tasks, the fixed reply | no tasks, the fixed reply | 2026-11-25 · Groq openai/gpt-oss-20b |
+| S6 | 更新資料集，再用新版資料訓練模型 | tasks in Chinese; training depends on the dataset task | 2 tasks: 更新資料集 → 用新版資料訓練模型 | 2026-11-25 · Groq openai/gpt-oss-20b |
+| S7 | train the model | tasks (short but concrete work) | 4 tasks: Prepare dataset, Design model architecture → Train model → Evaluate model | 2026-11-25 · Groq openai/gpt-oss-20b |
 
-Fix recorded during this change: the first version of the prompt added English examples, and S6 then came back with English titles. A stronger language rule ("including its script… The English examples above never change the language") fixed it; three re-runs of S6 gave Chinese titles.
+History:
+- First version: the model wrote its own reply. With English examples in the prompt, S6 came back with English titles; a stronger language rule ("including its script… The English examples above never change the language") fixed it.
+- Current version: the reply is fixed text from the backend, so the model only returns `{"tasks": []}`. In the first full run S6 and S7 each failed once with "not valid JSON"; three more runs of each, and the re-run above, all parsed and gave tasks. Watch for this if it happens again.
 
 ## GPU estimate (`GPU_ESTIMATE_PROMPT`, and the `gpu` field of `SYSTEM_PROMPT`)
 

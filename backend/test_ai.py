@@ -325,19 +325,27 @@ def test_parse_suggestions_tolerates_wrapped_json():
 
 # ---------- messages that are not work to plan ("how are you") ----------
 
-OFF_TOPIC_REPLY = "I'm doing well, thanks! Describe upcoming work, e.g. \"update the dataset, then retrain\"."
-
-
-def test_off_topic_message_gets_a_reply_and_no_tasks(db):
-    content = json.dumps({"tasks": [], "reply": OFF_TOPIC_REPLY})
-    client = real(db, urlopen=fake_urlopen(completion(content)))
+def test_off_topic_message_gets_the_fixed_reply_and_no_tasks(db):
+    client = real(db, urlopen=fake_urlopen(completion(json.dumps({"tasks": []}))))
     before = snapshot(db)
     resp = client.post("/api/suggestions", json={"description": "how are you"})
     assert resp.status_code == 200
     data = resp.get_json()
     assert data["tasks"] == [] and data["issues"] == []
-    assert data["reply"] == OFF_TOPIC_REPLY
+    assert data["reply"] == ai_suggest.OFF_TOPIC_REPLY
     assert snapshot(db) == before
+
+
+def test_off_topic_reply_is_identical_every_time(db):
+    """Whatever text the model adds, users always see the same English introduction."""
+    answers = [{"tasks": []}, {"tasks": None}, {"tasks": [], "reply": "我很好，謝謝！"},
+               {"tasks": [], "reply": "Sure! Ask me anything."}]
+    replies = set()
+    for answer in answers:
+        client = real(db, urlopen=fake_urlopen(completion(json.dumps(answer))))
+        replies.add(client.post("/api/suggestions", json={"description": "hi"}).get_json()["reply"])
+    assert replies == {ai_suggest.OFF_TOPIC_REPLY}
+    assert ai_suggest.OFF_TOPIC_REPLY.isascii()  # English only
 
 
 def test_work_description_has_no_reply(db):
@@ -346,31 +354,26 @@ def test_work_description_has_no_reply(db):
     assert len(data["tasks"]) == 3 and data["reply"] is None
 
 
-@pytest.mark.parametrize(
-    "payload, expected",
-    [
-        ({"tasks": None, "reply": "  Hi!  "}, {"tasks": [], "reply": "Hi!"}),
-        # A reply next to real tasks is ignored: the tasks are the answer.
-        ({"tasks": [{"id": "T1", "title": "A"}], "reply": "Hi"},
-         {"tasks": [{"id": "T1", "title": "A", "description": "", "prerequisites": []}], "reply": None}),
-        ({"tasks": [], "reply": "x" * 900}, {"tasks": [], "reply": "x" * ai_suggest.MAX_REPLY}),
-    ],
-)
-def test_parse_suggestions_reply_variants(payload, expected):
-    assert ai_suggest.parse_suggestions(json.dumps(payload)) == expected
+def test_text_from_the_model_next_to_real_tasks_is_ignored():
+    payload = {"tasks": [{"id": "T1", "title": "A"}], "reply": "Hi"}
+    assert ai_suggest.parse_suggestions(json.dumps(payload)) == {
+        "tasks": [{"id": "T1", "title": "A", "description": "", "prerequisites": []}],
+        "reply": None,
+    }
 
 
-@pytest.mark.parametrize("payload", [{"tasks": []}, {"tasks": [], "reply": "   "}, {"tasks": [], "reply": 3}])
-def test_empty_tasks_without_a_reply_is_bad_format(payload):
+@pytest.mark.parametrize("payload", [{}, {"reply": "Hi"}, {"tasks": "none"}])
+def test_answer_without_a_tasks_list_is_still_bad_format(payload):
     with pytest.raises(SuggestionError) as err:
         ai_suggest.parse_suggestions(json.dumps(payload))
     assert err.value.code == "bad_format"
 
 
-def test_prompt_asks_for_a_reply_instead_of_invented_tasks():
+def test_prompt_asks_for_an_empty_list_instead_of_invented_tasks():
     prompt = ai_suggest.SYSTEM_PROMPT
-    assert '{"tasks": [], "reply": "..."}' in prompt
+    assert '{"tasks": []}' in prompt
     assert "Do not invent tasks" in prompt
+    assert '"reply"' not in prompt  # the model no longer writes the answer itself
 
 
 # ---------- provider selection: AI_PROVIDER=openrouter (default) or groq ----------
