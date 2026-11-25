@@ -54,8 +54,8 @@
   background: var(--panel); border: 1px solid var(--line-strong); border-left: 4px solid var(--dot-waiting);
   border-radius: var(--radius); padding: 4px 7px;
 }
-.wt-card.ready { border-left-color: var(--dot-ready); }
-.wt-card.done { border-left-color: var(--dot-done); opacity: 0.7; }
+.wt-card.ready { border-left-color: var(--state-ready); }
+.wt-card.done { border-left-color: var(--state-done); opacity: 0.7; }
 .wt-card:hover { border-color: var(--muted); }
 .wt-card.selected { box-shadow: 0 0 0 2px var(--accent); }
 .wt-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -136,3 +136,19 @@
   font: inherit; padding: 3px 6px; border: 1px solid var(--line-strong); border-radius: var(--radius); min-width: 0;
 }
 .schedule-form .schedule-hint, .schedule-form .form-actions { grid-column: 1 / -1; }
+
+/* Workload: work hours and 1-5 star difficulty (workload.js). AI estimates are italic purple. */
+.wt-member { display: flex; flex-direction: column; gap: 2px; }
+.wt-member-load { font-size: 0.72rem; font-weight: 400; color: var(--muted); }
+.wt-member-missing { color: #9a4a00; }
+.wt-load-bar { display: flex; height: 5px; border-radius: 3px; background: var(--bg); overflow: hidden; }
+.wt-load-bar i { display: block; height: 100%; }
+.wt-load-bar i.done { background: var(--state-done); }
+.wt-load-bar i.ready { background: var(--state-ready); }
+.wt-load-bar i.waiting { background: var(--dot-waiting); }
+.wt-stars { color: #ba7517; letter-spacing: 0.5px; }
+.wt-work { font-size: 0.75rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wt-work.ai { font-style: italic; color: #6639ba; }
+.wt-work.ai .wt-stars { color: #8a6dc7; }
+.wt-stars-mini { flex: none; font-size: 0.7rem; color: #ba7517; }
+.wt-stars-mini.ai { color: #8a6dc7; font-style: italic; }

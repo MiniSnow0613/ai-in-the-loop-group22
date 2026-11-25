@@ -10,13 +10,14 @@ from app import create_app
 
 
 class FakeEstimator:
-    """AI stand-in with both suggest() and estimate_gpu()."""
+    """AI stand-in with both suggest() and estimate_task() (GPU part + workload part)."""
 
     model = "openai/gpt-oss-20b"
     provider_name = "Groq"
 
-    def __init__(self, tasks=None, estimate=None, error=None, configured=True):
+    def __init__(self, tasks=None, estimate=None, error=None, configured=True, work=None):
         self.tasks, self.estimate, self.error, self._configured = tasks, estimate, error, configured
+        self.work = work
         self.estimate_calls = []
 
     def configured(self):
@@ -29,11 +30,11 @@ class FakeEstimator:
     def suggest(self, description, existing_tasks):
         return ai_suggest.normalize_tasks(self.tasks)
 
-    def estimate_gpu(self, title, description):
+    def estimate_task(self, title, description):
         self.estimate_calls.append((title, description))
         if self.error:
             raise self.error
-        return self.estimate
+        return {"gpu": self.estimate, "work": self.work}
 
 
 def inline(job):
@@ -41,7 +42,8 @@ def inline(job):
 
 
 def make(tmp_path, suggester, runner=inline):
-    return create_app(tmp_path / "est.db", suggester=suggester, gpu_estimate_runner=runner).test_client()
+    return create_app(tmp_path / "est.db", suggester=suggester, gpu_estimate_runner=runner,
+                      estimate_backlog=False).test_client()
 
 
 def card(board, task_id):
@@ -85,8 +87,9 @@ def test_bad_gpu_field_does_not_reject_the_batch():
 
 def test_prompts_ask_for_gpu():
     assert '"gpu"' in ai_suggest.SYSTEM_PROMPT and "0.5 to 336" in ai_suggest.SYSTEM_PROMPT
-    messages = ai_suggest.build_gpu_messages("Train policy", "On the new rollouts")
-    assert messages[0]["content"] == ai_suggest.GPU_ESTIMATE_PROMPT
+    messages = ai_suggest.build_estimate_messages("Train policy", "On the new rollouts")
+    assert messages[0]["content"] == ai_suggest.TASK_ESTIMATE_PROMPT
+    assert '"gpu"' in ai_suggest.TASK_ESTIMATE_PROMPT
     assert "Train policy" in messages[1]["content"] and "On the new rollouts" in messages[1]["content"]
 
 
@@ -97,13 +100,13 @@ def test_prompts_ask_for_gpu():
         ('Sure: {"needed": true, "hours": 3}', 3),
     ],
 )
-def test_parse_gpu_estimate(content, hours):
-    assert ai_suggest.parse_gpu_estimate(content)["hours"] == hours
+def test_parse_gpu_part(content, hours):
+    assert ai_suggest.parse_task_estimate(content)["gpu"]["hours"] == hours
 
 
-def test_parse_gpu_estimate_rejects_missing_answer():
+def test_parse_estimate_rejects_an_unusable_answer():
     with pytest.raises(SuggestionError) as e:
-        ai_suggest.parse_gpu_estimate('{"gpu": {}}')
+        ai_suggest.parse_task_estimate('{"gpu": {}}')
     assert e.value.code == "bad_format"
 
 
@@ -128,8 +131,11 @@ def test_real_suggester_estimate_sends_one_task(tmp_path):
         return Resp()
 
     s = AiSuggester(urlopen=urlopen, environ={"AI_PROVIDER": "groq", "GROQ_API_KEY": "gsk-test"})
-    assert s.estimate_gpu("Write report", "") == {"needed": False, "hours": None, "reason": "writing", "source": "ai"}
-    assert captured[0]["messages"][0]["content"] == ai_suggest.GPU_ESTIMATE_PROMPT
+    assert s.estimate_task("Write report", "") == {
+        "gpu": {"needed": False, "hours": None, "reason": "writing", "source": "ai"},
+        "work": None,
+    }
+    assert captured[0]["messages"][0]["content"] == ai_suggest.TASK_ESTIMATE_PROMPT
 
 
 # ---------- suggestions: estimate in the preview, saved on accept ----------
@@ -220,9 +226,10 @@ def test_deleted_task_ignores_the_late_answer(tmp_path):
 def test_pending_estimate_is_marked_failed_after_restart(tmp_path):
     queued = []
     db = tmp_path / "est.db"
-    client = create_app(db, suggester=FakeEstimator(estimate=TRAIN), gpu_estimate_runner=queued.append).test_client()
+    client = create_app(db, suggester=FakeEstimator(estimate=TRAIN), gpu_estimate_runner=queued.append,
+                        estimate_backlog=False).test_client()
     tid = client.post("/api/tasks", json={"title": "Train policy"}).get_json()["createdId"]
-    restarted = create_app(db, suggester=FakeEstimator(estimate=TRAIN)).test_client()
+    restarted = create_app(db, suggester=FakeEstimator(estimate=TRAIN), estimate_backlog=False).test_client()
     est = card(restarted.get("/api/board").get_json(), tid)["gpuEstimate"]
     assert est["status"] == "failed" and "restarted" in est["error"]
 

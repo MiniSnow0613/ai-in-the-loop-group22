@@ -9,6 +9,7 @@ import {
 } from "./dates.js";
 import { cardIssueLevel, ISSUE_LABEL, issueKind, shownIssues } from "./scheduleIssues.js";
 import { layoutMember } from "./timelineLayout.js";
+import { DIFFICULTY_LABEL, formatWorkHours, isAiHours, isAiStars, isAiWork, memberWeekWork, starText, workText } from "./workload.js";
 import "./WeekTimeline.css";
 
 /*
@@ -50,7 +51,9 @@ function shortStatus(task) {
 function tooltipText(task, range, issues, gpu) {
   const lines = [task.title, range];
   if (task.stateText) lines.push(task.stateText);
-  if (task.workHours != null) lines.push(`Estimated work: ${task.workHours}h`);
+  const work = workText(task);
+  if (work) lines.push(`Workload: ${work}`);
+  if (task.difficulty) lines.push(`Difficulty ${task.difficulty}/5: ${DIFFICULTY_LABEL[task.difficulty]}`);
   if (gpu) lines.push(gpu.text);
   for (const i of shownIssues(issues)) lines.push(`${ISSUE_LABEL[issueKind(i)]}: ${i.message}`);
   lines.push("Drag to move · drag the top or bottom edge to change the dates");
@@ -118,6 +121,11 @@ function ScheduledCard({ item, issues, gpu, selected, highlighted, resizing, can
           <i className="dot" aria-hidden="true" />
           {item.continuesBefore && <span aria-hidden="true">↑</span>}
           <span className="wt-compact-text">{shortStatus(task)}</span>
+          {task.difficulty && (
+            <span className={`wt-stars-mini ${isAiStars(task) ? "ai" : ""}`} aria-hidden="true">
+              ★{task.difficulty}
+            </span>
+          )}
           {level && (
             <span className={`wt-mark ${level}`} aria-hidden="true">
               {level === "error" ? "!" : "⚠"}
@@ -128,10 +136,18 @@ function ScheduledCard({ item, issues, gpu, selected, highlighted, resizing, can
         </span>
       ) : (
         <>
-          <span className="wt-card-meta">
-            {range}
-            {task.workHours != null && ` · ${task.workHours}h work`}
-          </span>
+          <span className="wt-card-meta">{range}</span>
+          {(task.workHours != null || task.difficulty) && (
+            <span className={isAiWork(task) ? "wt-work ai" : "wt-work"}>
+              {task.workHours != null && `${isAiHours(task) ? "~" : ""}${formatWorkHours(task.workHours)} work`}
+              {task.workHours != null && task.difficulty ? " · " : ""}
+              {task.difficulty && (
+                <span className="wt-stars" aria-label={`difficulty ${task.difficulty} of 5`}>
+                  {starText(task.difficulty)}
+                </span>
+              )}
+            </span>
+          )}
           {task.stateText && (
             <span className={`status ${kind} wt-state`}>
               <i className="dot" aria-hidden="true" />
@@ -303,6 +319,12 @@ export default function WeekTimeline({
   };
 
   const original = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
+  // Workload per member in the visible week (from the saved dates, not a resize preview).
+  const workByMember = useMemo(
+    () => Object.fromEntries(members.map((m) => [m.id, memberWeekWork(tasks, m.id, start, weekEnd)])),
+    [members, tasks, start, weekEnd]
+  );
+  const maxWork = Math.max(0, ...Object.values(workByMember).map((w) => w.hours));
 
   return (
     <section
@@ -344,11 +366,38 @@ export default function WeekTimeline({
           }}
         >
           <div className="wt-corner" style={{ gridRow: 1, gridColumn: 1 }} />
-          {members.map((m, ci) => (
-            <div key={m.id} className="wt-member" style={{ gridRow: 1, gridColumn: ci + 2 }}>
-              {m.name}
-            </div>
-          ))}
+          {members.map((m, ci) => {
+            const w = workByMember[m.id];
+            return (
+              <div key={m.id} className="wt-member" style={{ gridRow: 1, gridColumn: ci + 2 }}>
+                <span className="wt-member-name">{m.name}</span>
+                <span
+                  className="wt-member-load"
+                  title={
+                    "Estimated work hours of this member's tasks in this week, completed ones included " +
+                    `(${formatWorkHours(w.done)} done, ${formatWorkHours(w.ready)} ready, ` +
+                    `${formatWorkHours(w.waiting)} waiting for prerequisites). ` +
+                    "A task spanning several weeks counts its share of days." +
+                    (w.missing ? ` ${w.missing} task(s) have no estimate yet.` : "")
+                  }
+                >
+                  {w.counted
+                    ? `${formatWorkHours(w.done)} / ${formatWorkHours(w.hours)} done this week`
+                    : w.missing
+                      ? "Not estimated"
+                      : "No work this week"}
+                  {w.missing > 0 && w.counted > 0 && <span className="wt-member-missing"> · {w.missing} not estimated</span>}
+                </span>
+                {maxWork > 0 && (
+                  <span className="wt-load-bar" aria-hidden="true">
+                    <i className="done" style={{ width: `${(w.done / maxWork) * 100}%` }} />
+                    <i className="ready" style={{ width: `${(w.ready / maxWork) * 100}%` }} />
+                    <i className="waiting" style={{ width: `${(w.waiting / maxWork) * 100}%` }} />
+                  </span>
+                )}
+              </div>
+            );
+          })}
 
           {dates.map((d, ri) => (
             <div

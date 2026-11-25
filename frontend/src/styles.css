@@ -10,6 +10,11 @@
   --dot-waiting: #9aa1a9;
   --dot-ready: #1f883d;
   --dot-done: #cf222e;
+  /* Task state colors (see .status.ready / .status.done). */
+  --state-done: #1f883d;
+  --state-done-line: #b7dfc0;
+  --state-ready: #d4a72c;      /* dots, card edges, bar */
+  --state-ready-text: #9a6700; /* darker yellow so the text stays readable */
   --radius: 6px;
   --row-h: 84px;
   --axis-w: 76px;
@@ -119,7 +124,7 @@ h1, h2, h3, p { margin: 0; }
 .card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 /* Located from the detail popover; fades after a few seconds (App.jsx). */
 .card.highlight { border-color: var(--highlight); box-shadow: 0 0 0 2px var(--highlight); background: #fff8e5; }
-.card.done { border-color: #e9b4b8; }
+.card.done { border-color: var(--state-done-line); }
 .card.done .card-title { color: var(--muted); }
 .card-title { display: flex; align-items: center; gap: 6px; font-weight: 600; }
 
@@ -130,9 +135,15 @@ h1, h2, h3, p { margin: 0; }
 
 .status { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--muted); }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dot-waiting); flex: none; }
-.status.ready { color: var(--dot-ready); }
-.status.ready .dot { background: var(--dot-ready); }
-.status.done .dot { background: var(--dot-done); }
+/* Task states: Completed is green, Ready (can start, not done yet) is yellow, Waiting is gray.
+   The weekly workload bar above the Timeline uses the same three colors. */
+.status.ready { color: var(--state-ready-text); }
+.status.ready .dot { background: var(--state-ready); }
+.status.done { color: var(--state-done); }
+.status.done .dot { background: var(--state-done); }
+/* Not a task state: "connected" / "added" messages in the AI Assistant stay green. */
+.status.ok { color: var(--dot-ready); }
+.status.ok .dot { background: var(--dot-ready); }
 
 /* ---------- Task detail popover ---------- */
 .detail {
@@ -459,3 +470,32 @@ h1, h2, h3, p { margin: 0; }
   .chat { min-height: 320px; }
   .gpu-lower { grid-template-columns: 1fr; }
 }
+
+/* ---------- Workload: work hours + 1-5 star difficulty (workload.js, WorkloadSection.jsx) ---------- */
+.card-work { display: flex; align-items: center; flex-wrap: wrap; gap: 0 4px; font-size: 0.78rem; color: var(--muted); }
+.card-work.ai { font-style: italic; color: #6639ba; }
+.card-work.estimating { font-style: italic; }
+.card-stars, .workload-stars { color: #ba7517; letter-spacing: 0.5px; font-style: normal; }
+.card-work.ai .card-stars, .workload-ai .workload-stars { color: #8a6dc7; }
+.workload-stars .off { color: var(--line-strong); }
+.card-ai-tag { margin: 0 0 0 2px; font-style: normal; font-size: 0.65rem; }
+.workload-section p + p { margin-top: 3px; }
+.workload-ai { color: #6639ba; font-style: italic; }
+.workload-reason, .workload-hint { font-size: 0.78rem; }
+.workload-form { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 10px; align-items: center; font-size: 0.85rem; margin-top: 4px; }
+.workload-form label, .workload-form .form-label { color: var(--muted); }
+.workload-form input[type="number"] { width: 100px; font: inherit; padding: 3px 6px; border: 1px solid var(--line-strong); border-radius: var(--radius); }
+.workload-form .form-actions { grid-column: 1 / -1; }
+.workload-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.workload-picker .muted { font-size: 0.78rem; }
+.star-picker { display: inline-flex; }
+.star-picker button {
+  border: none; background: none; padding: 0 1px; font-size: 1.2rem; line-height: 1; cursor: pointer;
+  color: var(--line-strong);
+}
+.star-picker button.on { color: #f0a33a; }
+.star-picker button:hover { color: #d98a1e; }
+.star-picker button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 3px; }
+.suggestion-work { align-items: center; }
+.suggestion-work.ai > span:not(.ai-tag):not(.dep-label):not(.muted) { font-style: italic; color: #6639ba; }
+.suggestion-work .star-picker button { font-size: 1rem; }

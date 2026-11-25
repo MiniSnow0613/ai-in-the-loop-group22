@@ -50,6 +50,11 @@ export function requestGpuEstimate(taskId) {
   return request(`/api/tasks/${encodeURIComponent(taskId)}/gpu-estimate`, { method: "POST" });
 }
 
+/** Ask the AI again (in the background). parts: ["gpu"], ["work"] or both; only those are overwritten. */
+export function requestEstimate(taskId, parts) {
+  return request(`/api/tasks/${encodeURIComponent(taskId)}/estimate`, json("POST", { parts }));
+}
+
 export function deleteTask(taskId) {
   return request(`/api/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
 }

@@ -11,6 +11,7 @@ import {
 import { bookingProgress } from "./gpuProgress.js";
 import PrereqPicker from "./PrereqPicker.jsx";
 import ScheduleSection from "./ScheduleSection.jsx";
+import WorkloadSection from "./WorkloadSection.jsx";
 import { stateKind } from "./taskState.js";
 import "./TaskDetail.css";
 
@@ -381,6 +382,7 @@ export default function TaskDetail({
   onSaveTask,
   onDeleteTask,
   onEstimateGpu,
+  onEstimate,
 }) {
   const ref = useRef(null);
   const [pos, setPos] = useState({ left: -9999, top: -9999 });
@@ -493,6 +495,7 @@ export default function TaskDetail({
       {task.summary && <p className="detail-desc">{task.summary}</p>}
 
       <ScheduleSection task={task} members={members} onSaveTask={onSaveTask} />
+      <WorkloadSection task={task} onSaveTask={onSaveTask} onEstimate={onEstimate} />
       <RelatedSection
         title="Prerequisites"
         items={task.prerequisites}
