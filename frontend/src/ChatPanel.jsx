@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { acceptSuggestions, fetchAiStatus, requestSuggestions } from "./api.js";
+import {
+  acceptSuggestions,
+  clearAiOverride,
+  fetchAiStatus,
+  getAiOverride,
+  requestSuggestions,
+  setAiOverride,
+} from "./api.js";
 import PrereqPicker from "./PrereqPicker.jsx";
 
 const ERROR_TITLES = {
@@ -449,14 +456,28 @@ export default function ChatPanel({ boardTasks = [], onTasksAdded }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [override, setOverride] = useState(() => getAiOverride());
+  const [keyBoxOpen, setKeyBoxOpen] = useState(true);
   const nextId = useRef(1);
   const logRef = useRef(null);
 
   useEffect(() => {
-    fetchAiStatus()
-      .then(setStatus)
-      .catch((err) => setStatus({ fetchError: err.message }));
-  }, []);
+    setAiOverride(override);
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      fetchAiStatus()
+        .then((s) => {
+          if (!cancelled) setStatus(s);
+        })
+        .catch((err) => {
+          if (!cancelled) setStatus({ fetchError: err.message });
+        });
+    }, 150);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [override]);
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" });
@@ -541,6 +562,14 @@ export default function ChatPanel({ boardTasks = [], onTasksAdded }) {
 
   const discard = (msg) => updateSuggestion(msg.id, { state: "discarded", error: null, editing: [] });
 
+  const hasOverride = Boolean(override.provider || override.apiKey);
+  const usingCustomKey = status?.source === "user" && configured;
+  const providerOptions = [
+    { key: "groq", name: "Groq" },
+    { key: "openrouter", name: "OpenRouter" },
+  ];
+  const hostName = status?.hostProviderName || (!hasOverride ? status?.providerName : null);
+  const hostDefaultLabel = hostName ? `Host default (${hostName})` : "Host default";
   const providerLabel = status?.providerName ? `${status.providerName} · ${status.model}` : null;
   const pill = !status
     ? { kind: "waiting", text: "Checking…" }
@@ -549,18 +578,73 @@ export default function ChatPanel({ boardTasks = [], onTasksAdded }) {
       : status.configError
         ? { kind: "waiting", text: "Not configured" }
         : configured
-          ? { kind: "ready", text: providerLabel }
+          ? { kind: "ready", text: `${usingCustomKey ? "Your key · " : ""}${providerLabel}` }
           : { kind: "waiting", text: `${status.providerName} · no API key` };
+
+  const resetOverride = () => {
+    clearAiOverride();
+    setOverride({ provider: "", apiKey: "" });
+  };
 
   return (
     <aside className="panel chat" aria-label="AI assistant">
       <div className="panel-head">
         <h2>AI Assistant</h2>
-        <span className={`status ${pill.kind}`} data-testid="ai-status" title="AI provider and model (set by AI_PROVIDER)">
+        <span className={`status ${pill.kind}`} data-testid="ai-status" title="Active AI provider and model">
           <i className="dot" aria-hidden="true" />
           {pill.text}
         </span>
+        <button
+          type="button"
+          className="link-btn ai-key-toggle"
+          aria-expanded={keyBoxOpen}
+          onClick={() => setKeyBoxOpen((o) => !o)}
+        >
+          {keyBoxOpen ? "Hide key" : "API key"}
+        </button>
       </div>
+
+      {keyBoxOpen && (
+        <div className="ai-key-box" data-testid="ai-key-box">
+          <div className="ai-key-row">
+            <label htmlFor="ai-provider-select">Provider</label>
+            <select
+              id="ai-provider-select"
+              value={override.provider}
+              onChange={(e) => setOverride((o) => ({ ...o, provider: e.target.value }))}
+            >
+              <option value="">{hostDefaultLabel}</option>
+              {providerOptions.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            {hasOverride && (
+              <button type="button" className="link-btn" onClick={resetOverride}>
+                Reset
+              </button>
+            )}
+          </div>
+          <div className="ai-key-row">
+            <label htmlFor="ai-key-input">API key</label>
+            <input
+              id="ai-key-input"
+              type="password"
+              value={override.apiKey}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="Leave blank to use host key"
+              onChange={(e) => setOverride((o) => ({ ...o, apiKey: e.target.value }))}
+            />
+          </div>
+          <p className="ai-key-hint">
+            {usingCustomKey
+              ? `Using your browser's ${status.providerName} key (saved locally, never sent to teammates).`
+              : "Optional: leave blank to use the host's provider and key."}
+          </p>
+        </div>
+      )}
 
       <div className="chat-messages" role="log" aria-live="polite" ref={logRef}>
         <div className="msg system">
@@ -573,6 +657,7 @@ export default function ChatPanel({ boardTasks = [], onTasksAdded }) {
           {providerLabel && (
             <p className="provider-line" data-testid="ai-provider">
               Provider: <b>{status.providerName}</b> · Model: <code>{status.model}</code>
+              {usingCustomKey ? " (your key)" : ""}
             </p>
           )}
         </div>
@@ -580,9 +665,18 @@ export default function ChatPanel({ boardTasks = [], onTasksAdded }) {
           <div className="msg error" role="alert">
             <strong>API key missing</strong>
             <p>
-              The assistant is set to use {status.providerName}. Set <code>{status.keyEnv}</code> in
-              the PowerShell window that starts Flask, then restart the server. The Timeline and Task
-              Pool keep working without it.
+              {status.source === "user" ? (
+                <>
+                  Enter your {status.providerName} API key in the box above, or switch Provider back to{" "}
+                  <b>{hostDefaultLabel}</b>.
+                </>
+              ) : (
+                <>
+                  The host has no {status.providerName} key configured. Enter your own API key in the
+                  box above (or set <code>{status.keyEnv}</code> on the server). The Timeline and Task
+                  Pool keep working without it.
+                </>
+              )}
             </p>
           </div>
         )}

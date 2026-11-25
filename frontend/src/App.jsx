@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createTask, deleteTask, fetchBoard, requestGpuEstimate, updateTask } from "./api.js";
+import {
+  clearBoardPasscode,
+  createTask,
+  deleteTask,
+  fetchAuthStatus,
+  fetchBoard,
+  requestGpuEstimate,
+  setBoardPasscode,
+  updateTask,
+  verifyPasscode,
+} from "./api.js";
 import ChatPanel from "./ChatPanel.jsx";
 import GpuSchedule from "./GpuSchedule.jsx";
 import NewTaskForm from "./NewTaskForm.jsx";
@@ -151,7 +161,73 @@ function TaskPool({ tasks, allTasks, dragging, cardProps, onDropTask, onCreateTa
   );
 }
 
+function AuthGate({ auth, onUnlocked }) {
+  const [passcode, setPasscode] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [errMsg, setErrMsg] = useState("");
+
+  if (auth.configured === false) {
+    return (
+      <main className="auth-gate">
+        <div className="auth-card" role="alert">
+          <h1>Host Password Required</h1>
+          <p>
+            This shared board cannot open until the host configures a password. Set{" "}
+            <code>BOARD_PASSCODE</code> in the server environment variables (e.g., Render Dashboard →
+            Environment) and redeploy.
+          </p>
+          {auth.error && <p className="muted">{auth.error}</p>}
+        </div>
+      </main>
+    );
+  }
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!passcode.trim() || submitting) return;
+    setSubmitting(true);
+    setErrMsg("");
+    try {
+      await verifyPasscode(passcode);
+      setBoardPasscode(passcode);
+      onUnlocked();
+    } catch (err) {
+      setErrMsg(err.message || "Incorrect password.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <main className="auth-gate">
+      <form className="auth-card" onSubmit={submit}>
+        <h1>Experiment Coordination Board</h1>
+        <p className="muted">Enter the team password provided by the board host to continue.</p>
+        <label htmlFor="board-passcode-input">Password</label>
+        <input
+          id="board-passcode-input"
+          type="password"
+          value={passcode}
+          autoFocus
+          autoComplete="current-password"
+          placeholder="Board password"
+          onChange={(e) => setPasscode(e.target.value)}
+        />
+        {errMsg && (
+          <p className="msg-error-inline" role="alert">
+            {errMsg}
+          </p>
+        )}
+        <button type="submit" className="btn primary" disabled={submitting || !passcode.trim()}>
+          {submitting ? "Unlocking…" : "Unlock board"}
+        </button>
+      </form>
+    </main>
+  );
+}
+
 export default function App() {
+  const [auth, setAuth] = useState(null); // { required, configured, authenticated, error? }
   const [board, setBoard] = useState(null);
   // `error`: the last action failed (stays until the next successful action or
   // until dismissed). `loadError`: the board could not be fetched; polling
@@ -172,26 +248,54 @@ export default function App() {
   // (same-member overlaps are allowed and not announced).
   const [notice, setNotice] = useState(null);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetchAuthStatus()
+      .then((status) => {
+        if (!cancelled) setAuth(status);
+      })
+      .catch((err) => {
+        if (!cancelled) setLoadError(`Could not reach the server: ${err.message}`);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const load = useCallback(async () => {
     try {
       setBoard(await fetchBoard());
       setLoadError("");
     } catch (err) {
+      if (err.code === "passcode_required") {
+        clearBoardPasscode();
+        setBoard(null);
+        setAuth({ required: true, configured: true, authenticated: false });
+        return;
+      }
+      if (err.code === "passcode_not_configured") {
+        setBoard(null);
+        setAuth({ required: true, configured: false, authenticated: false, error: err.message });
+        return;
+      }
       setLoadError(`Could not load the board: ${err.message}`);
     }
   }, []);
 
+  const isAuthenticated = auth?.authenticated === true;
+
   useEffect(() => {
+    if (!isAuthenticated) return undefined;
     load();
     // Light polling so another browser's changes show up even without a refresh.
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") load();
     }, POLL_MS);
     return () => clearInterval(timer);
-  }, [load]);
+  }, [isAuthenticated, load]);
 
   // While the AI is estimating a card's GPU need, check back sooner than the normal poll.
-  const estimating = Boolean(board?.tasks.some((t) => t.gpuEstimate?.status === "pending"));
+  const estimating = isAuthenticated && Boolean(board?.tasks.some((t) => t.gpuEstimate?.status === "pending"));
   useEffect(() => {
     if (!estimating) return undefined;
     const timer = setInterval(load, ESTIMATE_POLL_MS);
@@ -336,6 +440,22 @@ export default function App() {
     locateTask(taskId);
   };
 
+  const handleLock = () => {
+    clearBoardPasscode();
+    setBoard(null);
+    setSelected(null);
+    setAuth({ required: true, configured: true, authenticated: false });
+  };
+
+  if (auth && !auth.authenticated) {
+    return (
+      <AuthGate
+        auth={auth}
+        onUnlocked={() => setAuth({ required: true, configured: true, authenticated: true })}
+      />
+    );
+  }
+
   if (!board) {
     return (
       <main className="loading">{loadError ? <p className="error">{loadError}</p> : <p>Loading…</p>}</main>
@@ -383,6 +503,11 @@ export default function App() {
               </button>
             ))}
           </nav>
+          {auth?.required && (
+            <button type="button" className="btn lock-btn" onClick={handleLock} title="Lock this browser session">
+              Lock
+            </button>
+          )}
           {loadError && (
             <p className="error" role="alert">
               {loadError}
