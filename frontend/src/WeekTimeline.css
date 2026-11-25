@@ -6,40 +6,50 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  background: var(--panel-primary);
 }
 /* In the app, the Timeline takes the space above the Task Pool. */
 .work > .wt { flex: 1 1 auto; min-height: 280px; }
-.wt-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
-.wt-head h2 { font-size: 0.95rem; font-weight: 600; margin: 0; }
+.wt-head {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 12px 16px;
+  background: var(--panel-primary-head);
+  border-bottom: 1px solid var(--line);
+}
+.wt-head h2 { font-size: 0.96rem; font-weight: 650; letter-spacing: -0.01em; margin: 0; }
 .wt-head .hint { flex: 1; min-width: 200px; }
 .wt-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.wt-nav .btn { padding: 3px 10px; font-size: 0.8rem; }
-.wt-range { font-size: 0.85rem; font-weight: 600; margin-left: 6px; }
+.wt-nav .btn { padding: 4px 11px; font-size: 0.8rem; }
+.wt-range { font-size: 0.85rem; font-weight: 600; color: var(--text); margin-left: 6px; }
 
 .wt-scroll { overflow: auto; flex: 1; }
 .wt-grid { display: grid; grid-template-rows: auto repeat(7, var(--wt-row-h)); min-width: min-content; }
 
 .wt-corner, .wt-member {
-  position: sticky; top: 0; z-index: 2; background: var(--panel);
-  border-bottom: 1px solid var(--line-strong); padding: 8px 10px;
+  position: sticky; top: 0; z-index: 2;
+  background: var(--panel-primary-head);
+  border-bottom: 1px solid var(--line-strong);
+  padding: 9px 12px;
 }
-.wt-member { font-weight: 600; border-left: 1px solid var(--line); }
+.wt-member { font-weight: 600; font-size: 0.86rem; color: var(--text); border-left: 1px solid var(--line); }
 
 .wt-date {
   display: flex; flex-direction: column; justify-content: center; align-items: center;
-  font-size: 0.8rem; color: var(--muted); border-bottom: 1px solid var(--line);
+  font-size: 0.78rem; color: var(--muted);
+  background: var(--panel-primary-axis);
+  border-bottom: 1px solid var(--line);
 }
 .wt-dayname { font-weight: 600; color: var(--text); }
-.wt-date.today { color: var(--accent); }
+.wt-date.today { color: var(--accent); background: var(--accent-soft); }
 .wt-date.today .wt-dayname { color: var(--accent); }
 
 /* Each member column is its own grid: 7 day rows x N lanes for overlaps. */
-.wt-column { display: grid; grid-template-rows: repeat(7, var(--wt-row-h)); column-gap: 4px; padding: 0 4px; border-left: 1px solid var(--line); }
-.wt-cell { border-bottom: 1px solid var(--line); margin: 0 -4px; }
+.wt-column { display: grid; grid-template-rows: repeat(7, var(--wt-row-h)); column-gap: 4px; padding: 0 5px; border-left: 1px solid var(--line); }
+.wt-cell { border-bottom: 1px solid var(--line); margin: 0 -5px; transition: background-color 0.14s ease, box-shadow 0.14s ease; }
 .wt-cell.today { background: var(--accent-soft); }
-.wt.is-dragging .wt-cell { background: #fafcff; }
+.wt.is-dragging .wt-cell { background: var(--accent-drop); }
 .wt.is-dragging .wt-cell.today { background: var(--accent-soft); }
-.wt-cell.over, .wt.is-dragging .wt-cell.over { background: #dbe7fb; box-shadow: inset 0 0 0 2px var(--accent); }
+.wt-cell.over, .wt.is-dragging .wt-cell.over { background: var(--accent-over); box-shadow: inset 0 0 0 2px var(--accent); }
 
 /* Cards. Root cause of the old clipping: a fixed 76px day row held a title,
    a date line, a status line that could wrap to several lines and an issue
@@ -48,54 +58,60 @@
    layout (title + one status line) that fits inside one row. Full text is in
    the tooltip and the task details. */
 .wt-card {
-  position: relative; z-index: 1; margin: 3px 0; min-width: 0; min-height: 0;
+  position: relative; z-index: 1; margin: 4px 0; min-width: 0; min-height: 0;
   display: flex; flex-direction: column; gap: 2px; overflow: hidden;
   text-align: left; font: inherit; color: inherit; cursor: grab;
-  background: var(--panel); border: 1px solid var(--line-strong); border-left: 4px solid var(--dot-waiting);
-  border-radius: var(--radius); padding: 4px 7px;
+  background: var(--card-bg);
+  border: 1px solid var(--line-strong);
+  border-left: 4px solid var(--dot-waiting);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  padding: 5px 8px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease, background-color 0.15s ease;
 }
 .wt-card.ready { border-left-color: var(--dot-ready); }
-.wt-card.done { border-left-color: var(--dot-done); opacity: 0.7; }
-.wt-card:hover { border-color: var(--muted); }
-.wt-card.selected { box-shadow: 0 0 0 2px var(--accent); }
-.wt-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.wt-card.done { border-left-color: var(--dot-done); opacity: 0.74; background: var(--panel-pool); }
+.wt-card:hover { border-color: var(--line-hover); box-shadow: var(--shadow-card-hover); transform: translateY(-1px); }
+.wt-card:active { cursor: grabbing; transform: translateY(0); }
+.wt-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent), var(--shadow-card-hover); }
+.wt-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* Colour only for real scheduling problems. Overlaps for one member are allowed
    and get no colour (scheduleIssues.js). */
-.wt-card.has-warning { background: #fff8e5; }
-.wt-card.has-error { background: #fdecec; border-color: #f3c2c2; }
-.wt-card.highlight { box-shadow: 0 0 0 2px var(--highlight); background: #fff8e5; }
+.wt-card.has-warning { background: var(--warn-bg); border-color: var(--warn-border); }
+.wt-card.has-error { background: var(--danger-bg); border-color: var(--danger-border); }
+.wt-card.highlight { box-shadow: 0 0 0 2px var(--highlight), var(--shadow-card-hover); background: var(--warn-bg); }
 /* While something is dragged, drops go to the day cells underneath. */
 .wt.is-dragging .wt-card { pointer-events: none; opacity: 0.75; }
 
 .wt-card > * { flex-shrink: 0; min-width: 0; }
 .wt-card-title {
-  font-weight: 600; font-size: 0.85rem; line-height: 1.25; overflow: hidden;
+  font-weight: 600; font-size: 0.84rem; line-height: 1.25; overflow: hidden;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere;
 }
 /* Single-line parts: never wrap, end with "…" (full text in the tooltip). */
 .wt-card-meta, .wt-continues, .wt-compact-line, .wt-gpu-line, .wt-resize-label {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.3;
 }
-.wt-card-meta { font-size: 0.75rem; color: var(--muted); }
+.wt-card-meta { font-size: 0.74rem; color: var(--muted); }
 .wt-continues { font-size: 0.7rem; color: var(--muted); }
 .wt-state { font-size: 0.72rem; align-items: flex-start; }
 .wt-state .dot { margin-top: 4px; }
 .wt-state-text {
   overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.3;
 }
-.wt-issue { align-self: flex-start; font-size: 0.7rem; font-weight: 600; border-radius: 4px; padding: 0 5px; }
-.wt-issue.warning { color: #7a5200; background: #ffeeb8; }
-.wt-issue.error { color: #9b1c1c; background: #f8d1d1; }
-.wt-card .wt-gpu-line { font-size: 0.7rem; margin: 2px -7px 0; padding: 1px 7px; }
+.wt-issue { align-self: flex-start; font-size: 0.7rem; font-weight: 600; border-radius: var(--radius-sm); padding: 1px 6px; }
+.wt-issue.warning { color: var(--warn-text); background: var(--warn-chip-bg); }
+.wt-issue.error { color: var(--danger-text); background: var(--danger-chip-bg); }
+.wt-card .wt-gpu-line { font-size: 0.7rem; margin: 2px -8px 0; padding: 1px 8px; }
 
 /* Compact (one visible day): title + one status line. */
 .wt-compact-line { display: flex; align-items: center; gap: 4px; font-size: 0.72rem; }
 .wt-compact-text { overflow: hidden; text-overflow: ellipsis; }
-.wt-mark { flex: none; font-weight: 700; border-radius: 3px; padding: 0 3px; line-height: 1.2; }
-.wt-mark.warning { color: #7a5200; background: #ffeeb8; }
-.wt-mark.error { color: #fff; background: #cf222e; }
+.wt-mark { flex: none; font-weight: 700; border-radius: 4px; padding: 0 4px; line-height: 1.25; }
+.wt-mark.warning { color: var(--warn-text); background: var(--warn-chip-bg); }
+.wt-mark.error { color: #fffdf9; background: var(--dot-done); }
 .wt-gpu-chip {
-  flex: none; font-size: 0.65rem; font-weight: 600; border-radius: 3px; padding: 0 4px; line-height: 1.3;
+  flex: none; font-size: 0.65rem; font-weight: 600; border-radius: 4px; padding: 0 5px; line-height: 1.3;
   color: var(--gpu-booked-text); background: var(--gpu-booked-bg); border: 1px solid var(--gpu-booked-line);
 }
 
@@ -103,7 +119,7 @@
 .wt-handle { position: absolute; left: 0; right: 0; height: 7px; z-index: 2; cursor: ns-resize; touch-action: none; }
 .wt-handle.start { top: 0; }
 .wt-handle.end { bottom: 0; }
-.wt-card:hover .wt-handle { background: rgba(47, 111, 222, 0.18); }
+.wt-card:hover .wt-handle { background: rgba(53, 91, 150, 0.16); }
 .wt.is-resizing, .wt.is-resizing * { cursor: ns-resize !important; user-select: none; }
 .wt-card.resizing { outline: 2px dashed var(--accent); outline-offset: -1px; z-index: 3; }
 .wt-resize-label { font-size: 0.75rem; font-weight: 600; color: var(--accent); }
@@ -115,24 +131,25 @@
 /* Saved with warnings (App.jsx). */
 .schedule-notice {
   display: flex; align-items: flex-start; gap: 8px; margin: 0;
-  font-size: 0.85rem; color: #7a5200; background: #fff1c2; border: 1px solid #f0d58a;
-  border-radius: var(--radius); padding: 4px 10px;
+  font-size: 0.84rem; color: var(--warn-text); background: var(--warn-bg); border: 1px solid var(--warn-border);
+  border-radius: var(--radius); padding: 5px 11px;
 }
 .schedule-notice ul { margin: 0; padding-left: 16px; }
 .schedule-notice .icon-btn { margin-left: auto; }
 
 /* Owner of an unscheduled card in the Task Pool. */
-.owner-badge { font-size: 0.72rem; color: var(--muted); }
+.owner-badge { font-size: 0.73rem; color: var(--muted); }
 
 /* Scheduling section of the task details (ScheduleSection.jsx). */
 .schedule-section p { margin: 0 0 4px; font-size: 0.85rem; }
 .schedule-issues { list-style: none; margin: 4px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; }
-.schedule-issues li { border-radius: var(--radius); padding: 4px 8px; }
-.schedule-issues li.warning { color: #7a5200; background: #fff1c2; }
-.schedule-issues li.error { color: #9b1c1c; background: #fdecec; }
+.schedule-issues li { border-radius: var(--radius-sm); padding: 5px 9px; }
+.schedule-issues li.warning { color: var(--warn-text); background: var(--warn-bg); }
+.schedule-issues li.error { color: var(--danger-text); background: var(--danger-bg); }
 .schedule-form { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 10px; font-size: 0.85rem; }
 .schedule-form label { color: var(--muted); }
 .schedule-form input, .schedule-form select {
-  font: inherit; padding: 3px 6px; border: 1px solid var(--line-strong); border-radius: var(--radius); min-width: 0;
+  font: inherit; padding: 4px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius);
+  background: var(--input-bg); color: var(--text); min-width: 0;
 }
 .schedule-form .schedule-hint, .schedule-form .form-actions { grid-column: 1 / -1; }

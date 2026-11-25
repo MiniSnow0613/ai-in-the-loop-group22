@@ -9,17 +9,18 @@
    Scoped to .detail so other screens keep their styles. */
 .detail .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 4px;
-  align-self: auto; min-height: 28px; padding: 0 10px; font-size: 0.8rem; line-height: 1.2;
+  align-self: auto; min-height: 29px; padding: 0 11px; font-size: 0.8rem; font-weight: 500; line-height: 1.2;
   border-radius: var(--radius); white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
-.detail .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.detail .btn.primary:hover:not(:disabled) { color: #fff; background: #2459b8; border-color: #2459b8; }
-.detail .btn.primary:disabled { color: #fff; background: #9db8e8; border-color: #9db8e8; }
-.detail .btn.ghost { background: none; border-color: transparent; color: var(--accent); padding: 0 6px; }
-.detail .btn.ghost:hover:not(:disabled) { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
-.detail .btn.ghost:disabled { background: none; border-color: transparent; color: var(--muted); }
-.detail .btn.ghost.danger { color: #9b1c1c; }
-.detail .btn.ghost.danger:hover:not(:disabled) { background: #fdecec; color: #9b1c1c; }
+.detail .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.detail .btn.primary:hover:not(:disabled) { color: #fffdf9; background: var(--accent-hover); border-color: var(--accent-hover); }
+.detail .btn.primary:disabled { color: #fffdf9; background: var(--accent-disabled); border-color: var(--accent-disabled); }
+.detail .btn.ghost { background: transparent; border-color: transparent; box-shadow: none; color: var(--accent); padding: 0 7px; }
+.detail .btn.ghost:hover:not(:disabled) { background: var(--accent-soft); border-color: transparent; color: var(--accent-hover); }
+.detail .btn.ghost:disabled { background: transparent; border-color: transparent; color: var(--muted); }
+.detail .btn.ghost.danger { color: var(--danger-text); }
+.detail .btn.ghost.danger:hover:not(:disabled) { background: var(--danger-bg); color: var(--danger-text); }
 
 /* One row of actions per section; ghost buttons sit a little to the left so
    their text lines up with the section text. */
