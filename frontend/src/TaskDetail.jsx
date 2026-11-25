@@ -8,8 +8,11 @@ import {
   KIND_LABEL,
   remainingHours,
 } from "./gpuState.js";
+import { bookingProgress } from "./gpuProgress.js";
 import PrereqPicker from "./PrereqPicker.jsx";
+import ScheduleSection from "./ScheduleSection.jsx";
 import { stateKind } from "./taskState.js";
+import "./TaskDetail.css";
 
 const GAP = 8;
 const MARGIN = 12;
@@ -65,38 +68,45 @@ function RelatedSection({ title, items, empty, tasksById, statusLabel, onLocate 
   );
 }
 
-/** The AI's answer (marked as an estimate) or the person's own number. */
-function GpuEstimate({ task }) {
+/** Estimated GPU hours (AI or a person) and actually booked GPU hours, kept apart. */
+function GpuFacts({ task }) {
   const est = task.gpuEstimate || {};
   const ai = isAiEstimate(task);
-  const tag = ai && <span className="ai-tag">AI estimate</span>;
-  const reason = ai && est.reason && <p className="muted gpu-reason">{est.reason}</p>;
   if (est.status === "pending") return <p className="muted">Asking the AI whether this task needs a GPU…</p>;
-  if (task.needsGpu) {
-    const hours = task.gpuHours == null ? "time unknown" : `${ai ? "~" : ""}${formatHours(task.gpuHours)} in total`;
+  if (!task.needsGpu) {
     return (
       <>
-        <p>{tag}Needs a GPU · {hours}</p>
-        {reason}
+        {est.status === "failed" && <p className="msg-error-inline">AI estimate failed: {est.error}</p>}
+        <p className={est.status === "failed" ? "muted" : undefined}>
+          {ai && <span className="ai-tag">AI estimate</span>}No GPU needed
+        </p>
+        {ai && est.reason && <p className="muted gpu-reason">{est.reason}</p>}
       </>
     );
   }
-  if (est.status === "failed") return <p className="msg-error-inline">AI estimate failed: {est.error}</p>;
-  if (ai) {
-    return (
-      <>
-        <p>{tag}No GPU needed</p>
-        {reason}
-      </>
-    );
-  }
-  return <p className="muted">No GPU needed.</p>;
+  const progress = bookingProgress(task);
+  return (
+    <>
+      <dl className="gpu-facts">
+        <dt>Estimated</dt>
+        <dd>
+          {task.gpuHours == null ? "Unknown" : `${ai ? "~" : ""}${formatHours(task.gpuHours)}`}
+          {ai ? <span className="ai-tag gpu-source">AI estimate</span> : task.gpuHours != null && <span className="muted gpu-source">set by a person</span>}
+        </dd>
+        <dt>Booked</dt>
+        <dd>
+          {formatHours(progress.booked)}
+          <span className="gpu-progress" data-kind={progress.kind}>{progress.text}</span>
+        </dd>
+      </dl>
+      {ai && est.reason && <p className="muted gpu-reason">{est.reason}</p>}
+    </>
+  );
 }
 
 /**
- * GPU need (AI estimate or set by a person), progress of bookings, and the way
- * into the GPU schedule tab. A person can confirm the AI's hours, change them,
- * or ask the AI again.
+ * GPU need (AI estimate or set by a person), booked hours, and the way into the
+ * GPU schedule tab. Main actions are buttons; the rest are small links.
  */
 function GpuSection({ task, onOpenGpu, onSaveTask, onEstimateGpu }) {
   const [editing, setEditing] = useState(false);
@@ -144,19 +154,12 @@ function GpuSection({ task, onOpenGpu, onSaveTask, onEstimateGpu }) {
     if (await run(() => onSaveTask(task.id, { gpuHours: value }))) setEditing(false);
   };
 
+  const canConfirm = task.needsGpu && isAiEstimate(task) && task.gpuHours != null;
+
   return (
     <section className="related-section gpu-section">
       <h4>GPU</h4>
-      <GpuEstimate task={task} />
-      {task.needsGpu && task.gpuHours != null && (
-        <p className="muted">
-          Booked {formatHours(task.bookedGpuHours || 0)} of {formatHours(task.gpuHours)}
-          {left > 0 ? ` · ${formatHours(left)} left` : " · fully booked"}
-        </p>
-      )}
-      {task.needsGpu && task.gpuHours == null && task.bookedGpuHours > 0 && (
-        <p className="muted">Booked {formatHours(task.bookedGpuHours)} so far</p>
-      )}
+      <GpuFacts task={task} />
       {b && (
         <p className={`gpu-band ${bookingKind(b)} inline`}>
           {b.gpuName} · {formatRange(b.startAt, b.endAt)} · {KIND_LABEL[bookingKind(b)]}
@@ -165,7 +168,7 @@ function GpuSection({ task, onOpenGpu, onSaveTask, onEstimateGpu }) {
 
       {editing && (
         <form className="gpu-hours-form" onSubmit={saveHours}>
-          <label htmlFor="gpu-hours-input">Total GPU hours</label>
+          <label htmlFor="gpu-hours-input">Estimated GPU hours</label>
           <input
             id="gpu-hours-input"
             type="number"
@@ -180,7 +183,7 @@ function GpuSection({ task, onOpenGpu, onSaveTask, onEstimateGpu }) {
           <button type="submit" className="btn primary" disabled={busy}>
             Save
           </button>
-          <button type="button" className="btn" disabled={busy} onClick={() => setEditing(false)}>
+          <button type="button" className="btn ghost" disabled={busy} onClick={() => setEditing(false)}>
             Cancel
           </button>
         </form>
@@ -192,41 +195,52 @@ function GpuSection({ task, onOpenGpu, onSaveTask, onEstimateGpu }) {
       )}
 
       {!isDone && !editing && (
-        <div className="gpu-actions">
-          {task.needsGpu && left !== 0 && (
-            <button type="button" className="btn primary" onClick={() => onOpenGpu({ bookTaskId: task.id })}>
-              Schedule on GPU
-            </button>
-          )}
-          {b && (
-            <button type="button" className="btn" onClick={() => onOpenGpu({ bookingId: b.id })}>
-              View in GPU schedule
-            </button>
-          )}
-          {task.needsGpu && isAiEstimate(task) && task.gpuHours != null && (
-            <button
-              type="button"
-              className="btn"
-              disabled={busy}
-              onClick={() => run(() => onSaveTask(task.id, { gpuHours: task.gpuHours }))}
-            >
-              Confirm {formatHours(task.gpuHours)}
-            </button>
-          )}
-          <button type="button" className="btn" onClick={startEdit}>
-            {task.needsGpu ? "Edit hours" : "Needs a GPU"}
-          </button>
-          {task.needsGpu && !activeBooking && (
-            <button type="button" className="btn" disabled={busy} onClick={() => run(() => onSaveTask(task.id, { needsGpu: false }))}>
-              No GPU needed
-            </button>
-          )}
-          {!pending && (
-            <button type="button" className="link-btn" disabled={busy} onClick={() => run(() => onEstimateGpu(task.id))}>
-              {task.gpuEstimate?.status ? "Ask AI again" : "Ask AI to estimate"}
-            </button>
-          )}
-        </div>
+        <>
+          <div className="gpu-actions detail-actions">
+            {canConfirm && (
+              <button
+                type="button"
+                className="btn primary"
+                disabled={busy}
+                onClick={() => run(() => onSaveTask(task.id, { gpuHours: task.gpuHours }))}
+              >
+                Confirm {formatHours(task.gpuHours)}
+              </button>
+            )}
+            {task.needsGpu && left !== 0 && (
+              <button type="button" className="btn" onClick={() => onOpenGpu({ bookTaskId: task.id })}>
+                Schedule on GPU
+              </button>
+            )}
+            {b && (
+              <button type="button" className="btn" onClick={() => onOpenGpu({ bookingId: b.id })}>
+                View in GPU schedule
+              </button>
+            )}
+            {!task.needsGpu && (
+              <button type="button" className="btn" onClick={startEdit}>
+                Needs a GPU
+              </button>
+            )}
+          </div>
+          <div className="gpu-more detail-actions" aria-label="More GPU actions">
+            {task.needsGpu && (
+              <button type="button" className="btn ghost" onClick={startEdit}>
+                Edit hours
+              </button>
+            )}
+            {task.needsGpu && !activeBooking && (
+              <button type="button" className="btn ghost" disabled={busy} onClick={() => run(() => onSaveTask(task.id, { needsGpu: false }))}>
+                No GPU needed
+              </button>
+            )}
+            {!pending && (
+              <button type="button" className="btn ghost" disabled={busy} onClick={() => run(() => onEstimateGpu(task.id))}>
+                {task.gpuEstimate?.status ? "Ask AI again" : "Ask AI to estimate"}
+              </button>
+            )}
+          </div>
+        </>
       )}
     </section>
   );
@@ -298,7 +312,7 @@ function EditForm({ task, tasksById, onSave, onCancel }) {
         <button type="submit" className="btn primary" disabled={!title.trim() || saving}>
           {saving ? "Saving…" : "Save"}
         </button>
-        <button type="button" className="btn" onClick={onCancel} disabled={saving}>
+        <button type="button" className="btn ghost" onClick={onCancel} disabled={saving}>
           Cancel
         </button>
       </div>
@@ -344,7 +358,7 @@ function DeleteConfirm({ task, onDelete, onCancel }) {
         <button type="button" className="btn danger" disabled={deleting} onClick={remove}>
           {deleting ? "Deleting…" : "Delete task"}
         </button>
-        <button type="button" className="btn" disabled={deleting} onClick={onCancel}>
+        <button type="button" className="btn ghost" disabled={deleting} onClick={onCancel}>
           Cancel
         </button>
       </div>
@@ -356,6 +370,7 @@ function DeleteConfirm({ task, onDelete, onCancel }) {
 export default function TaskDetail({
   task,
   tasksById,
+  members = [],
   assigneeName,
   anchor,
   onToggleDone,
@@ -379,7 +394,8 @@ export default function TaskDetail({
     const { width, height } = el.getBoundingClientRect();
     let left = anchor.right + GAP;
     if (left + width > window.innerWidth - MARGIN) left = anchor.left - GAP - width;
-    left = Math.max(MARGIN, left);
+    // Narrow screens: neither side fits, so keep the whole popover on screen.
+    left = Math.max(MARGIN, Math.min(left, window.innerWidth - width - MARGIN));
     const top = Math.min(Math.max(MARGIN, anchor.top), window.innerHeight - height - MARGIN);
     setPos({ left, top: Math.max(MARGIN, top) });
   }, [anchor, task.prerequisites.length, task.dependents.length, mode]);
@@ -391,7 +407,7 @@ export default function TaskDetail({
     const onKey = (e) => e.key === "Escape" && onClose();
     const onPointer = (e) => {
       if (ref.current?.contains(e.target)) return;
-      if (e.target.closest?.(".card")) return; // card clicks toggle/switch the popover
+      if (e.target.closest?.(".card, .wt-card")) return; // card clicks toggle/switch the popover
       onClose();
     };
     // The anchor rect goes stale once anything outside the popover scrolls or resizes.
@@ -410,13 +426,9 @@ export default function TaskDetail({
 
   const isDone = task.status === "done";
   const canToggle = isDone || !task.blocked; // undoing is checked by the server
-  const summaryLine = isDone
-    ? "This task is completed."
-    : task.blocked
-      ? `${task.pendingCount} ${task.pendingCount === 1 ? "prerequisite is" : "prerequisites are"} not completed yet. This task can start once all are completed.`
-      : task.prerequisites.length > 0
-        ? "All prerequisites are completed. This task can start."
-        : "No prerequisites. This task can start.";
+  // The status line already says Ready / Completed / Waiting for X. When a
+  // task waits for several prerequisites, name them (the status only counts them).
+  const blockers = isDone ? [] : task.prerequisites.filter((p) => p.status !== "done");
 
   return (
     <div
@@ -436,10 +448,24 @@ export default function TaskDetail({
         </button>
       </div>
 
-      <p className={`status ${kind}`}>
-        <i className="dot" aria-hidden="true" />
-        {task.stateText}
-      </p>
+      {/* The task's status and the action that changes it, kept together. */}
+      <div className="detail-status-row">
+        <p className={`status ${kind}`}>
+          <i className="dot" aria-hidden="true" />
+          {task.stateText}
+        </p>
+        {mode === "view" && (
+          <button
+            type="button"
+            className="btn detail-status-btn"
+            disabled={!canToggle}
+            title={canToggle ? undefined : "Not all prerequisites are completed"}
+            onClick={() => onToggleDone(task)}
+          >
+            {isDone ? "Undo completion" : "Mark as completed"}
+          </button>
+        )}
+      </div>
 
       {mode === "edit" && (
         <EditForm task={task} tasksById={tasksById} onSave={onSaveTask} onCancel={() => setMode("view")} />
@@ -449,54 +475,47 @@ export default function TaskDetail({
       )}
       {mode === "view" && (
       <>
-      <dl>
-        <dt>Owner</dt>
-        <dd>{assigneeName || "Unassigned (Task Pool)"}</dd>
-        <dt>Dependency level</dt>
-        <dd>Level {task.row}</dd>
-        <dt>Description</dt>
-        <dd>{task.description || "No description yet"}</dd>
-        {task.summary && (
-          <>
-            <dt>Summary</dt>
-            <dd>{task.summary}</dd>
-          </>
-        )}
-      </dl>
-      <p className="muted">{summaryLine}</p>
+      <p className="detail-owner">
+        <span className="muted">Owner</span> {assigneeName || "Unassigned"}
+      </p>
+      {blockers.length > 1 && (
+        <p className="detail-blockers">
+          Waiting for{" "}
+          {blockers.map((p, i) => (
+            <span key={p.id}>
+              {i > 0 && (i === blockers.length - 1 ? " and " : ", ")}“{p.title}”{p.assigneeName ? ` (${p.assigneeName})` : ""}
+            </span>
+          ))}
+          .
+        </p>
+      )}
+      <p className={`detail-desc ${task.description ? "" : "muted"}`}>{task.description || "No description yet."}</p>
+      {task.summary && <p className="detail-desc">{task.summary}</p>}
 
+      <ScheduleSection task={task} members={members} onSaveTask={onSaveTask} />
       <RelatedSection
         title="Prerequisites"
         items={task.prerequisites}
-        empty="No prerequisites."
+        empty="None."
         tasksById={tasksById}
         statusLabel={(item) => (item.status === "done" ? "Completed" : "Not completed")}
         onLocate={onLocate}
       />
       <RelatedSection
-        title="Affected tasks"
+        title="Dependent Tasks"
         items={task.dependents}
-        empty="No tasks depend on this card."
+        empty="None."
         tasksById={tasksById}
         statusLabel={(item, t) => t?.stateText ?? (item.status === "done" ? "Completed" : "Not completed")}
         onLocate={onLocate}
       />
       <GpuSection task={task} onOpenGpu={onOpenGpu} onSaveTask={onSaveTask} onEstimateGpu={onEstimateGpu} />
 
-      <button
-        type="button"
-        className="btn"
-        disabled={!canToggle}
-        title={canToggle ? undefined : "Not all prerequisites are completed"}
-        onClick={() => onToggleDone(task)}
-      >
-        {isDone ? "Undo completion" : "Mark as completed"}
-      </button>
       <div className="detail-manage">
-        <button type="button" className="link-btn" onClick={() => setMode("edit")}>
+        <button type="button" className="btn ghost" onClick={() => setMode("edit")}>
           Edit task
         </button>
-        <button type="button" className="link-btn danger" onClick={() => setMode("delete")}>
+        <button type="button" className="btn ghost danger" onClick={() => setMode("delete")}>
           Delete task
         </button>
       </div>

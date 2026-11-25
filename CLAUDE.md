@@ -3,12 +3,16 @@
 ## Project overview
 
 This project is a shared task board built with React, Flask, and SQLite.
-Teammates can assign tasks by drag and drop, track prerequisites, and review
-AI-generated task suggestions before adding them to the Task Pool.
+Teammates can schedule tasks by dragging them onto a member and a date, track
+prerequisites, and review AI-generated task suggestions before adding them to
+the Task Pool.
 
 ## Rules for code changes
 
-- Preserve the Timeline's dependency levels across assignee columns. A task with prerequisites belongs one level after its latest prerequisite.
+- The Timeline is date-based: members are columns and the 7 days of a week (Monday first) are rows. A task is on the Timeline only when both `planned_start` and `planned_end` are set (`YYYY-MM-DD`, end inclusive); otherwise it is in the Task Pool, even if it has an assignee.
+- Validate every schedule change on the backend with [`backend/schedule.py`](backend/schedule.py) before saving, including dependency edits and upstream date changes. A task must start after (not on) the planned end of each unfinished prerequisite. Unscheduled prerequisites and overlapping tasks for one member are warnings, not errors. Never reschedule other tasks automatically; report the conflict instead.
+- Keep the dependency-level calculation (`compute_rows`, the `row` field) for a future dependency graph view, but do not use it to place Timeline cards.
+- Keep estimated human work hours (`work_hours`) separate from GPU hours (`gpu_hours`). Work hours never decide the planned dates, and planned dates never create or move GPU bookings.
 - Keep AI suggestions in preview until the user selects **Add to Task Pool**. Before saving, validate that prerequisite IDs exist and that the proposed dependencies contain no cycles.
 - Keep provider API keys in backend environment variables. Do not expose keys in frontend code, API responses, logs, or committed files.
 

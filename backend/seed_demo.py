@@ -18,8 +18,10 @@ work runs on its own chain.
 """
 import argparse
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
+import schedule
 from app import DEFAULT_DB_PATH, SCHEMA, connect, now_iso
 
 DEMO_DB_PATH = Path(__file__).resolve().parent / "data" / "board_demo.db"
@@ -75,7 +77,33 @@ GPUS = [
 ]
 
 
-def check_scenario():
+# Planned dates on the Timeline, as (first day, last day) counted from Monday of
+# the week the demo is built (0 = that Monday), plus estimated human work hours.
+# Finished work is in the past; the four Task Pool cards have no dates.
+PLAN = {
+    "demo-shared-timeline": (-7, -5, 12),
+    "demo-pool-ui": (-4, -2, 10),
+    "demo-manual-edit": (1, 2, 8),
+    "demo-task-api": (-6, -4, 10),
+    "demo-create-api": (0, 2, 12),
+    "demo-ai-format": (-5, -3, 6),
+    "demo-ai-suggest": (0, 3, 16),
+    "demo-gpu-fields": (-4, -3, 4),
+    "demo-gpu-overlap": (1, 3, 10),
+}
+
+
+def planned_dates(today=None):
+    """{task id: (planned_start, planned_end, work_hours)} for the week of `today`."""
+    today = today or date.today()
+    monday = today - timedelta(days=today.weekday())
+    return {
+        tid: ((monday + timedelta(days=a)).isoformat(), (monday + timedelta(days=b)).isoformat(), hours)
+        for tid, (a, b, hours) in PLAN.items()
+    }
+
+
+def check_scenario(today=None):
     """Fail loudly if the seed data contradicts the board's own rules."""
     status = {t[0]: t[3] for t in TASKS}
     prereqs = {t[0]: t[4] for t in TASKS}
@@ -85,13 +113,27 @@ def check_scenario():
             raise ValueError(f"{tid} depends on unknown task(s): {unknown}")
         if status[tid] == "done" and any(status[d] != "done" for d in deps):
             raise ValueError(f"{tid} is done but has an unfinished prerequisite")
+    plans = planned_dates(today)
+    unknown = set(plans) - set(status)
+    if unknown:
+        raise ValueError(f"PLAN names unknown task(s): {sorted(unknown)}")
+    board = {
+        tid: {"id": tid, "title": title, "status": st, "assignee_id": who,
+              "planned_start": plans.get(tid, (None,))[0], "planned_end": plans.get(tid, (None, None))[1],
+              "prerequisites": deps}
+        for tid, title, who, st, deps, _ in TASKS
+    }
+    errors = [i for issues in schedule.board_issues(board).values() for i in issues if i["severity"] == "error"]
+    if errors:
+        raise ValueError("Demo dates break the schedule rules: " + "; ".join(i["message"] for i in errors))
 
 
-def build(db_path):
+def build(db_path, today=None):
     db_path = Path(db_path).resolve()
     if db_path == DEFAULT_DB_PATH.resolve():
         sys.exit(f"Refusing to overwrite the main board database: {db_path}")
-    check_scenario()
+    check_scenario(today)
+    plans = planned_dates(today)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     conn = connect(db_path)
@@ -120,10 +162,11 @@ def build(db_path):
         conn.executemany(
             """INSERT INTO tasks
                (id, title, is_example, assignee_id, status, waiting_text,
-                position, updated_at, description, summary)
-               VALUES (?, ?, 0, ?, ?, NULL, ?, ?, ?, NULL)""",
+                position, updated_at, description, summary,
+                planned_start, planned_end, work_hours)
+               VALUES (?, ?, 0, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, ?)""",
             [
-                (tid, title, assignee, status, position, ts, desc)
+                (tid, title, assignee, status, position, ts, desc, *plans.get(tid, (None, None, None)))
                 for position, (tid, title, assignee, status, _, desc) in enumerate(TASKS)
             ],
         )

@@ -24,6 +24,11 @@
 **What:** We’re designing this with the assumption that users are only here to make their ML experiment workflows and collaboration smoother—not to do unrelated things like building web apps or running security tests.
 **Why:** Easier to deal with prompt dependency issue and generate test cases.
 
-## 2026-11-21 — Transfer code steward
+## 2026-11-23 — Date-based Timeline (replaces the 2026-11-15 dependency-level layout)
+**What:** Replaced dependency-level rows with a date-based Timeline that supports task scheduling, drag-and-drop, resizing, and dependency validation.
+**Why:** Dependency levels showed task order but not actual schedules, so a date-based Timeline helps teams plan work and identify scheduling conflicts.
+
+## 2026-11-25 — Transfer code steward
 **What:** Handed over the code steward role from GalahadJr-1214 to MiniSnow0613.
 **Why:** Routine role rotation / workload balancing.
+

@@ -55,12 +55,20 @@ $env:BOARD_DB_PATH = "backend\data\board_demo.db"
 
 ## 3. 試用多前置任務
 
-介面和 Demo 任務名稱為英文。如果看到的任務名稱仍是中文，表示 Demo 資料庫是在介面改成英文前建立的，先依第 6 節重設即可。
+介面和 Demo 任務名稱為英文。如果看到的任務名稱仍是中文，或 Timeline 上一張卡都沒有，表示 Demo 資料庫是在這些功能加入前建立的，先依第 6 節重設即可。
+
+Timeline 依日期排列：每位成員一欄，每列是一天，一次顯示從星期一開始的 7 天，可以用 `‹ Previous week`、`This week`、`Next week ›` 切換，今天會以底色標示。任務卡從計畫開始日延伸到結束日。還沒有計畫日期的任務都在 Task Pool，包含已經有負責人的任務。重設後的 Demo 中，已完成的任務排在上週，其他任務排在本週。
+
+先試排日期（步驟 1–5），再試完成狀態（步驟 6–7）。順序很重要：已完成的前置任務不再限制日期，所以要在完成之前試日期衝突。
 
 1. 在 Task Pool 的 `Waiting for prerequisites` 找到 `Integrate Chatbot into Task Pool`。初始畫面有 4 張卡在 Task Pool，整合卡應顯示 `Waiting for 2 prerequisites`。
-2. 點開 Member B 的 `Build task creation API`，按 Mark as completed。整合卡應改成只等待 Member C，顯示 `Waiting for Member C: Connect AI task suggestions`。
-3. 點開 Member C 的 `Connect AI task suggestions`，按 Mark as completed。整合卡應移到 `Ready`，即使 Member D 的 `Implement GPU time-slot overlap check` 仍未完成。
-4. 把整合卡拖給任一位成員。它應出現在 `Dependency level` 第 3 層，重新整理後保留負責人和位置。
+2. 把整合卡拖到 Member A 本週星期四的格子。它的前置任務 `Connect AI task suggestions` 計畫在星期四結束，後續任務必須在隔天以後開始，所以會被拒絕：上方顯示 `Not saved.` 開頭的訊息並建議最早可開始的日期，卡片留在 Task Pool。
+3. 改拖到 Member A 星期五的格子。新卡片預設只佔放下的那一天，負責人和日期會一起儲存；重新整理後位置不變。
+4. 點開這張卡，在 Scheduling 區塊按 Edit schedule，可以修改負責人、計畫開始和結束日期，以及預估的人力工時。工時只是估計，不會改變日期，也和 GPU 時數分開。若把開始日期改成星期四，表單會顯示原因且不儲存。也可以直接拖曳 Timeline 卡片的上緣或下緣調整開始或結束日期，放開後才儲存；被拒絕時卡片會回到原本的日期。
+5. 把 Task Pool 的 `Add prerequisite picker` 也拖到 Member A 的星期五。兩張卡會並排顯示，上方出現 `Saved with warnings`，卡片標示 `Warning`：同一人日期重疊只會警告，不會阻擋。
+6. 點開 Member B 的 `Build task creation API`，按 Mark as completed。整合卡應改成只等待 Member C，顯示 `Waiting for Member C: Connect AI task suggestions`。
+7. 點開 Member C 的 `Connect AI task suggestions`，按 Mark as completed。整合卡應改成 `Ready`，即使 Member D 的 `Implement GPU time-slot overlap check` 仍未完成。完成狀態和計畫日期彼此獨立，標為完成不會移動任何卡片。
+8. 把 Timeline 上的卡拖回 Task Pool，只會清除計畫日期，負責人、前置任務、工時和 GPU 資訊都保留。也可以在 Scheduling 區塊按 Clear schedule。
 
 
 可在同一台電腦用 Chrome 和 Edge 開啟同一個 5001 網址。一邊完成前置任務，另一邊約 5 秒後會讀取最新狀態，也可按 F5 確認。GPU 相關卡片是展示資料，第 5 節會用它們試用 GPU 預約。
@@ -99,7 +107,7 @@ $env:PORT = "5001"
 2. 在輸入框輸入「更新資料集，再用新版資料訓練模型」，按 Enter 或 Send。
 3. 檢查預覽中的前置關係。`Depends on` 列出每張卡的前置任務，預期「訓練模型」依賴「更新資料集」；依賴看板原有任務時會顯示 `On board: 任務名稱`。模型每次的輸出可能不同，但前置關係應合理。這時看板還沒有新增任何卡片。
 4. 按 Add to Task Pool，新卡片會出現在 Task Pool。
-5. 把新卡片拖到任一成員欄位，再按 F5，確認卡片、負責人和前置關係都還在。
+5. 把新卡片拖到任一成員和日期的格子，再按 F5，確認卡片、負責人、日期和前置關係都還在。
 
 如果預覽出現 `Dependency problems`，這批任務無法加入。可以按 Discard，換個方式描述工作再送出。
 
@@ -127,7 +135,7 @@ $env:AI_PROVIDER = "openrouter"
 
 上方的 `GPU schedule` 分頁是 GPU 時間表，每張 GPU 一列，顯示一天 00–24 點的預約。同一張 GPU 的預約時段不能重疊，任務卡底部的橘色色條會顯示這張卡的 GPU 預約。初始 Demo 有 `lab-server / GPU 0` 和 `lab-server / GPU 1` 兩張 GPU，沒有任何預約。如果只看到一張 `GPU 0`，表示 Demo 資料庫是在加入 GPU 功能前建立的，先依第 6 節重設即可。
 
-1. 在 Tasks 分頁點開 Member D 的 `Implement GPU time-slot overlap check`，在最下方的 GPU 區塊按 Needs a GPU，Total GPU hours 輸入 4 後按 Save。卡片底部應出現 `Needs a GPU · 4h`。
+1. 在 Tasks 分頁點開 Member D 的 `Implement GPU time-slot overlap check`，在最下方的 GPU 區塊按 Needs a GPU，Estimated GPU hours 輸入 4 後按 Save。卡片底部應出現 `Needs a GPU · 4h`。GPU 區塊會分開顯示 Estimated（預估時數）和 Booked（已預約時數）；預約超過預估時會寫出多出幾小時，這只是提醒，不算排程衝突。
 2. 按 Schedule on GPU，畫面會切到 GPU schedule，時間軸上出現綠色虛線的 4 小時方格，New booking 也已填好最早的空檔。可以拖曳方格換時段或換到另一張 GPU，拖左右邊緣調整長度，表單會跟著更新。按 Book 後，方格變成橘色的預約，卡片底部的色條也會顯示 GPU 和時段。
 3. 在同一列 GPU 上，點第一筆預約開始前一小時的空白處。新預約預設為 2 小時，會和第一筆重疊。Task 選 `Not a board task (other use)`，Used by 輸入「Lab shared job」。畫面應顯示紅色的 `Overlaps` 提示，按 Book 也會被拒絕。按 `Use earliest free slot` 改成最早可用的時段後，再按 Book 即可預約。
 4. 回到 Tasks 分頁，點開 Task Pool 的 `Test and document GPU conflict cases`，依步驟 1、2 預約。因為它還在等 Member D 的卡，色條會是虛線並顯示 `can't start yet`。在時間軸點這筆預約並按 Start job，畫面應列出尚未完成的前置任務。

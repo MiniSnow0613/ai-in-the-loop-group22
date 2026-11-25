@@ -1,0 +1,58 @@
+/* TaskDetail.jsx additions (the rest of its styles are in styles.css). */
+
+/* ---------- Buttons in the task details ----------
+   Same size for every tier; emphasis comes from fill and colour:
+     primary    .btn.primary        solid accent   Save, Confirm
+     secondary  .btn                outlined       Edit schedule, Mark as completed, Needs a GPU…
+     tertiary   .btn.ghost          text only      Cancel, Clear schedule, Ask AI…, Edit task
+     destructive .btn.ghost.danger  red text       Delete task (.btn.danger: the final confirmation)
+   Scoped to .detail so other screens keep their styles. */
+.detail .btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  align-self: auto; min-height: 28px; padding: 0 10px; font-size: 0.8rem; line-height: 1.2;
+  border-radius: var(--radius); white-space: nowrap;
+}
+.detail .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.detail .btn.primary:hover:not(:disabled) { color: #fff; background: #2459b8; border-color: #2459b8; }
+.detail .btn.primary:disabled { color: #fff; background: #9db8e8; border-color: #9db8e8; }
+.detail .btn.ghost { background: none; border-color: transparent; color: var(--accent); padding: 0 6px; }
+.detail .btn.ghost:hover:not(:disabled) { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+.detail .btn.ghost:disabled { background: none; border-color: transparent; color: var(--muted); }
+.detail .btn.ghost.danger { color: #9b1c1c; }
+.detail .btn.ghost.danger:hover:not(:disabled) { background: #fdecec; color: #9b1c1c; }
+
+/* One row of actions per section; ghost buttons sit a little to the left so
+   their text lines up with the section text. */
+.detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.detail-actions:empty { display: none; }
+.detail .gpu-section .gpu-actions { margin-top: 6px; }
+.detail .gpu-more { margin: 2px 0 0 -6px; gap: 2px; }
+.detail .detail-manage .btn.ghost:first-child { margin-left: -6px; }
+.detail .detail-manage .btn.ghost:last-child { margin-right: -6px; }
+.detail .form-actions { gap: 6px; }
+
+/* Status and its completion action on one line, at the top of the details. */
+.detail-status-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.detail-status-row .status { margin: 0; }
+
+/* Summary: owner, who is blocking (several prerequisites), description. */
+.detail-owner { font-size: 0.85rem; }
+.detail-owner .muted { margin-right: 6px; }
+.detail-blockers { font-size: 0.82rem; color: var(--muted); }
+.detail-desc { font-size: 0.85rem; line-height: 1.45; overflow-wrap: anywhere; }
+
+/* GPU: estimated hours and booked hours side by side, then actions. */
+.gpu-facts { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 0.85rem; }
+.gpu-facts dt { color: var(--muted); }
+.gpu-facts dd { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.gpu-source { font-size: 0.75rem; margin-right: 0; }
+.gpu-progress { font-size: 0.75rem; color: var(--muted); }
+.gpu-progress[data-kind="covered"] { color: var(--dot-ready); }
+/* More than estimated is allowed: a neutral note, not a conflict colour. */
+.gpu-progress[data-kind="over"] { color: var(--accent); }
+
+/* Narrow screens: main buttons take the full width; ghost buttons stay compact. */
+@media (max-width: 480px) {
+  .detail-status-row .btn { width: 100%; }
+  .detail .gpu-section .gpu-actions .btn:not(.ghost) { flex: 1 1 auto; }
+}

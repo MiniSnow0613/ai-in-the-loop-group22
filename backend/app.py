@@ -13,6 +13,7 @@ from flask import Flask, abort, g, jsonify, request, send_from_directory
 
 import ai_suggest
 import gpu
+import schedule
 from ai_suggest import AiSuggester, SuggestionError
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -52,7 +53,13 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- Background AI estimate for hand-made tasks: NULL, 'pending', 'done' or 'failed'.
     gpu_estimate_status TEXT,
     gpu_estimate_reason TEXT,
-    gpu_estimate_error  TEXT
+    gpu_estimate_error  TEXT,
+    -- Date-based Timeline (rules in schedule.py): local "YYYY-MM-DD", end inclusive.
+    -- A task is scheduled only when both dates are set.
+    planned_start TEXT,
+    planned_end   TEXT,
+    -- Estimated human work hours. Separate from gpu_hours; never decides the dates.
+    work_hours    REAL
 );
 CREATE TABLE IF NOT EXISTS task_dependencies (
     task_id         TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -97,6 +104,9 @@ ADDED_TASK_COLUMNS = {
     "gpu_estimate_status": "TEXT",
     "gpu_estimate_reason": "TEXT",
     "gpu_estimate_error": "TEXT",
+    "planned_start": "TEXT",
+    "planned_end": "TEXT",
+    "work_hours": "REAL",
 }
 
 ESTIMATE_INTERRUPTED = "The estimate was interrupted because the server restarted. Ask AI again."
@@ -253,6 +263,27 @@ def state_text(row, pending, member_names):
     return row["waiting_text"] or default
 
 
+def schedule_tasks(rows, prereqs):
+    """Tasks in the plain form schedule.py works on: {id: {...}}."""
+    return {
+        r["id"]: {
+            "id": r["id"],
+            "title": r["title"],
+            "status": r["status"],
+            "assignee_id": r["assignee_id"],
+            "planned_start": r["planned_start"],
+            "planned_end": r["planned_end"],
+            "prerequisites": list(prereqs.get(r["id"], [])),
+        }
+        for r in rows
+    }
+
+
+def load_schedule_tasks(conn):
+    rows = conn.execute("SELECT * FROM tasks ORDER BY position, id").fetchall()
+    return schedule_tasks(rows, load_prerequisites(conn, {r["id"] for r in rows}))
+
+
 def build_board(conn):
     members = [dict(r) for r in conn.execute("SELECT id, name FROM members ORDER BY position")]
     names = {m["id"]: m["name"] for m in members}
@@ -263,7 +294,10 @@ def build_board(conn):
     for tid in by_id:  # board order, so dependents are listed in a stable order
         for p in prereqs[tid]:
             dependents[p].append(tid)
+    # Dependency levels ("row") are kept for a future dependency graph view;
+    # the Timeline itself is placed by planned dates.
     timeline_rows = compute_rows(prereqs)
+    schedule_issues = schedule.board_issues(schedule_tasks(rows, prereqs))
     gpu_bookings = gpu.task_bookings(conn)
     booked_hours = gpu.booked_hours(conn)
 
@@ -306,6 +340,12 @@ def build_board(conn):
                     "reason": r["gpu_estimate_reason"],
                     "error": r["gpu_estimate_error"],
                 },
+                # Date-based Timeline. Scheduled only when both dates are set.
+                "plannedStart": r["planned_start"],
+                "plannedEnd": r["planned_end"],
+                "scheduled": bool(r["planned_start"] and r["planned_end"]),
+                "workHours": r["work_hours"],
+                "scheduleIssues": schedule_issues[r["id"]],
             }
         )
     return {"members": members, "tasks": tasks}
@@ -561,6 +601,25 @@ def create_app(db_path=None, suggester=None, gpu_detector=None, gpu_estimate_run
                 return jsonify(error="The description must be text."), 400
             updates["description"] = " ".join(description.split())[: ai_suggest.MAX_DESCRIPTION] or None
 
+        # Planned dates: send both, or one to keep the other as stored; null clears.
+        if "plannedStart" in body or "plannedEnd" in body:
+            try:
+                start, end = schedule.parse_range(
+                    body.get("plannedStart", row["planned_start"]),
+                    body.get("plannedEnd", row["planned_end"]),
+                )
+            except schedule.ScheduleError as e:
+                return jsonify(error=str(e), code="invalid_schedule"), 400
+            updates["planned_start"] = start.isoformat() if start else None
+            updates["planned_end"] = end.isoformat() if end else None
+
+        if "workHours" in body:
+            # Human effort only: never changes the dates or the GPU hours.
+            try:
+                updates["work_hours"] = schedule.work_hours_value(body["workHours"])
+            except schedule.ScheduleError as e:
+                return jsonify(error=str(e), code="invalid_work_hours"), 400
+
         new_prereqs = None
         if "prerequisites" in body:
             prereqs = body["prerequisites"]
@@ -574,6 +633,37 @@ def create_app(db_path=None, suggester=None, gpu_detector=None, gpu_estimate_run
         if not updates and new_prereqs is None:
             return jsonify(error="Nothing to update."), 400
 
+        # Schedule rules (schedule.py), checked before anything is saved. Only
+        # fields that actually change count, so e.g. re-sending the same
+        # prerequisite list with a new title is not blocked by an old conflict.
+        board_tasks = load_schedule_tasks(db())
+        current = board_tasks[task_id]
+        change = {}
+        if "planned_start" in updates and (
+            updates["planned_start"], updates["planned_end"]
+        ) != (current["planned_start"], current["planned_end"]):
+            change.update(planned_start=updates["planned_start"], planned_end=updates["planned_end"])
+        if new_prereqs is not None and set(new_prereqs) != set(current["prerequisites"]):
+            change["prerequisites"] = new_prereqs
+        if "assignee_id" in updates and updates["assignee_id"] != current["assignee_id"]:
+            change["assignee_id"] = updates["assignee_id"]
+        warnings = []
+        if change:
+            result = schedule.check_change(board_tasks, task_id, **change)
+            # Only new dates or prerequisites can create a date conflict; a new
+            # owner alone only changes overlap warnings.
+            if result["errors"] and ("planned_start" in change or "prerequisites" in change):
+                return (
+                    jsonify(
+                        error="Not saved. " + " ".join(i["message"] for i in result["errors"]),
+                        code="schedule_conflict",
+                        conflicts=result["errors"],
+                        warnings=result["warnings"],
+                    ),
+                    409,
+                )
+            warnings = result["warnings"]
+
         updates["updated_at"] = now_iso()
         cols = ", ".join(f"{k} = ?" for k in updates)
         db().execute(f"UPDATE tasks SET {cols} WHERE id = ?", (*updates.values(), task_id))
@@ -584,7 +674,8 @@ def create_app(db_path=None, suggester=None, gpu_detector=None, gpu_estimate_run
                 [(task_id, p) for p in new_prereqs],
             )
         db().commit()
-        return jsonify(build_board(db()))
+        # The board, plus warnings about this change (saving was allowed).
+        return jsonify({**build_board(db()), "warnings": warnings})
 
     @app.delete("/api/tasks/<task_id>")
     def delete_task(task_id):
