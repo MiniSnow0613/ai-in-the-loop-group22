@@ -35,3 +35,7 @@
 ## 2026-11-25 — Transfer code steward
 **What:** Handed over the code steward role from MiniSnow0613 to wachsu.
 **Why:** Routine role rotation / workload balancing.
+
+## 2026-11-25 — Editable dependency graph
+**What:** Add a dependency graph to the Timeline tab where users can view, add, and remove task dependencies. Every change is validated by the backend.
+**Why:** The Timeline shows when tasks happen but not which tasks wait for which, so the graph makes the order clear and easy to fix.
