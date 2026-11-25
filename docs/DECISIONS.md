@@ -19,3 +19,7 @@
 ## 2026-11-21 — Transfer code steward
 **What:** Handed over the code steward role from YinXuan1223 to GalahadJr-1214.
 **Why:** Routine role rotation / workload balancing.
+
+## 2026-11-22 —  Scope the application senario down to ML experiment
+**What:** We’re designing this with the assumption that users are only here to make their ML experiment workflows and collaboration smoother—not to do unrelated things like building web apps or running security tests.
+**Why:** Easier to deal with prompt dependency issue and generate test cases.
