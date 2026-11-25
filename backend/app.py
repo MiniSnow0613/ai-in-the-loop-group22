@@ -861,6 +861,42 @@ def create_app(db_path=None, suggester=None, gpu_detector=None, gpu_estimate_run
     return app
 
 
+LOCAL_ENV_PATH = BASE_DIR / ".env"
+SAVED_ENV_KEYS = ("AI_PROVIDER", "GROQ_API_KEY", "OPENROUTER_API_KEY")
+
+
+def sync_local_env(env_path=LOCAL_ENV_PATH, environ=os.environ):
+    """Load saved AI settings from backend/.env, and persist any newly provided ones."""
+    path = Path(env_path)
+    stored = {}
+    if path.is_file():
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key:
+                stored[key] = val
+
+    updated = dict(stored)
+    for key in SAVED_ENV_KEYS:
+        current = (environ.get(key) or "").strip()
+        if current:
+            updated[key] = current
+
+    if updated != stored:
+        lines = [f"{k}={v}" for k, v in updated.items()]
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    for key, val in updated.items():
+        if val and not (environ.get(key) or "").strip():
+            environ[key] = val
+
+
 if __name__ == "__main__":
+    sync_local_env()
     port = int(os.environ.get("PORT", "5000"))
     create_app().run(host="127.0.0.1", port=port, debug=False)
+

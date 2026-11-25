@@ -423,3 +423,29 @@ def test_unknown_provider_is_reported_and_nothing_is_called(db):
     assert status["configured"] is False and 'Unknown AI_PROVIDER "gemini"' in status["configError"]
     resp = client.post("/api/suggestions", json={"description": "plan"})
     assert resp.status_code == 503 and resp.get_json()["code"] == "invalid_provider"
+
+
+def test_sync_local_env_persists_and_reloads_keys(tmp_path):
+    from app import sync_local_env
+
+    env_file = tmp_path / ".env"
+
+    # First run with keys set in the shell -> saves them to .env
+    first_env = {"AI_PROVIDER": "groq", "GROQ_API_KEY": "gsk-saved-123"}
+    sync_local_env(env_file, first_env)
+    assert env_file.is_file()
+
+    # Next run with empty shell -> reloads saved values from .env
+    second_env = {}
+    sync_local_env(env_file, second_env)
+    assert second_env == {"AI_PROVIDER": "groq", "GROQ_API_KEY": "gsk-saved-123"}
+
+    # Later run with a new key -> updates .env and preserves other saved values
+    third_env = {"GROQ_API_KEY": "gsk-updated-456"}
+    sync_local_env(env_file, third_env)
+    assert third_env == {"AI_PROVIDER": "groq", "GROQ_API_KEY": "gsk-updated-456"}
+
+    fourth_env = {}
+    sync_local_env(env_file, fourth_env)
+    assert fourth_env == {"AI_PROVIDER": "groq", "GROQ_API_KEY": "gsk-updated-456"}
+
