@@ -32,3 +32,6 @@
 **What:** Handed over the code steward role from GalahadJr-1214 to MiniSnow0613.
 **Why:** Routine role rotation / workload balancing.
 
+## 2026-11-25 — Transfer code steward
+**What:** Handed over the code steward role from MiniSnow0613 to wachsu.
+**Why:** Routine role rotation / workload balancing.
