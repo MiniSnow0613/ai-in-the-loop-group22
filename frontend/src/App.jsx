@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createTask, deleteTask, fetchBoard, updateTask } from "./api.js";
+import { createTask, deleteTask, fetchBoard, requestGpuEstimate, updateTask } from "./api.js";
 import ChatPanel from "./ChatPanel.jsx";
 import GpuSchedule from "./GpuSchedule.jsx";
 import NewTaskForm from "./NewTaskForm.jsx";
@@ -9,6 +9,7 @@ import { stateKind } from "./taskState.js";
 
 const POOL = "__pool__";
 const POLL_MS = 5000;
+const ESTIMATE_POLL_MS = 1500;
 const MIN_ROWS = 4;
 const HIGHLIGHT_MS = 3000;
 
@@ -276,6 +277,14 @@ export default function App() {
     return () => clearInterval(timer);
   }, [load]);
 
+  // While the AI is estimating a card's GPU need, check back sooner than the normal poll.
+  const estimating = Boolean(board?.tasks.some((t) => t.gpuEstimate?.status === "pending"));
+  useEffect(() => {
+    if (!estimating) return undefined;
+    const timer = setInterval(load, ESTIMATE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [estimating, load]);
+
   // The dragged card may re-mount in its new column, so clear drag state globally.
   useEffect(() => {
     const clear = () => setDragging(null);
@@ -340,6 +349,12 @@ export default function App() {
 
   const handleSaveTask = async (taskId, changes) => {
     setBoard(await updateTask(taskId, changes));
+    setError("");
+  };
+
+  // Errors go back to the GPU section so it can show them.
+  const handleEstimateGpu = async (taskId) => {
+    setBoard(await requestGpuEstimate(taskId));
     setError("");
   };
 
@@ -468,6 +483,7 @@ export default function App() {
           onSetNeedsGpu={handleSetNeedsGpu}
           onSaveTask={handleSaveTask}
           onDeleteTask={handleDeleteTask}
+          onEstimateGpu={handleEstimateGpu}
         />
       )}
     </div>

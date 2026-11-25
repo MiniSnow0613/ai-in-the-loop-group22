@@ -4,6 +4,7 @@ Run:  python app.py   (serves the API, and the built frontend if frontend/dist e
 """
 import os
 import sqlite3
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,7 +45,14 @@ CREATE TABLE IF NOT EXISTS tasks (
     updated_at   TEXT NOT NULL,
     description  TEXT,
     summary      TEXT,
-    needs_gpu    INTEGER NOT NULL DEFAULT 0
+    needs_gpu    INTEGER NOT NULL DEFAULT 0,
+    -- Total GPU hours the task needs; "ai" = AI estimate, "user" = set or confirmed by a person.
+    gpu_hours           REAL,
+    gpu_hours_source    TEXT,
+    -- Background AI estimate for hand-made tasks: NULL, 'pending', 'done' or 'failed'.
+    gpu_estimate_status TEXT,
+    gpu_estimate_reason TEXT,
+    gpu_estimate_error  TEXT
 );
 CREATE TABLE IF NOT EXISTS task_dependencies (
     task_id         TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -84,7 +92,14 @@ ADDED_TASK_COLUMNS = {
     "description": "TEXT",
     "summary": "TEXT",
     "needs_gpu": "INTEGER NOT NULL DEFAULT 0",
+    "gpu_hours": "REAL",
+    "gpu_hours_source": "TEXT",
+    "gpu_estimate_status": "TEXT",
+    "gpu_estimate_reason": "TEXT",
+    "gpu_estimate_error": "TEXT",
 }
+
+ESTIMATE_INTERRUPTED = "The estimate was interrupted because the server restarted. Ask AI again."
 
 SEED_MEMBERS = [
     ("member-a", "Member A", 0),
@@ -173,6 +188,12 @@ def init_db(db_path):
             [(desc, tid) for tid, desc in SEED_DESCRIPTIONS.items()],
         )
         gpu.seed_default_gpu(conn, now_iso())
+        # An estimate still "pending" belonged to a server that has stopped.
+        conn.execute(
+            "UPDATE tasks SET gpu_estimate_status = 'failed', gpu_estimate_error = ? "
+            "WHERE gpu_estimate_status = 'pending'",
+            (ESTIMATE_INTERRUPTED,),
+        )
         conn.commit()
     finally:
         conn.close()
@@ -244,6 +265,7 @@ def build_board(conn):
             dependents[p].append(tid)
     timeline_rows = compute_rows(prereqs)
     gpu_bookings = gpu.task_bookings(conn)
+    booked_hours = gpu.booked_hours(conn)
 
     def ref(tid):
         t = by_id[tid]
@@ -276,6 +298,14 @@ def build_board(conn):
                 "updatedAt": r["updated_at"],
                 "needsGpu": bool(r["needs_gpu"]) or r["id"] in gpu_bookings,
                 "gpuBooking": gpu_bookings.get(r["id"]),
+                "gpuHours": r["gpu_hours"],
+                "gpuHoursSource": r["gpu_hours_source"],
+                "bookedGpuHours": booked_hours.get(r["id"], 0),
+                "gpuEstimate": {
+                    "status": r["gpu_estimate_status"],
+                    "reason": r["gpu_estimate_reason"],
+                    "error": r["gpu_estimate_error"],
+                },
             }
         )
     return {"members": members, "tasks": tasks}
@@ -318,19 +348,28 @@ def new_task_id(taken, prefix="ai"):
 def insert_tasks(conn, tasks, id_map):
     """Insert unassigned tasks and their prerequisites at the end of the board.
 
-    `tasks` are normalized dicts (id, title, description, prerequisites);
-    `id_map` maps each task's temporary id to its new board id. Prerequisites
-    not in id_map are existing board ids. The caller commits or rolls back.
+    `tasks` are normalized dicts (id, title, description, prerequisites, and
+    optionally gpu); `id_map` maps each task's temporary id to its new board id.
+    Prerequisites not in id_map are existing board ids. The caller commits or
+    rolls back.
     """
     start = conn.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM tasks").fetchone()[0]
     ts = now_iso()
+
+    def gpu_columns(t):
+        g = t.get("gpu")
+        if not g:
+            return (0, None, None, None)
+        return (int(g["needed"]), g["hours"], g["source"], g["reason"] or None)
+
     conn.executemany(
         """INSERT INTO tasks
            (id, title, is_example, assignee_id, status, waiting_text,
-            position, updated_at, description, summary)
-           VALUES (?, ?, 0, NULL, 'todo', NULL, ?, ?, ?, NULL)""",
+            position, updated_at, description, summary,
+            needs_gpu, gpu_hours, gpu_hours_source, gpu_estimate_reason)
+           VALUES (?, ?, 0, NULL, 'todo', NULL, ?, ?, ?, NULL, ?, ?, ?, ?)""",
         [
-            (id_map[t["id"]], t["title"], start + i, ts, t["description"] or None)
+            (id_map[t["id"]], t["title"], start + i, ts, t["description"] or None, *gpu_columns(t))
             for i, t in enumerate(tasks)
         ],
     )
@@ -371,11 +410,55 @@ def prerequisite_problem(conn, task_id, prereqs, status):
     return None
 
 
-def create_app(db_path=None, suggester=None, gpu_detector=None):
+def run_gpu_estimate(db_path, suggester, task_id):
+    """Ask the AI about one task and store the answer, unless a person decided meanwhile.
+
+    Runs outside any request, so it opens its own connection. Only a task whose
+    estimate is still "pending" is updated: editing the GPU fields by hand
+    clears that status, and a deleted task simply matches nothing.
+    """
+    conn = connect(db_path)
+    try:
+        row = conn.execute("SELECT title, description FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            return
+        try:
+            est = suggester.estimate_gpu(row["title"], row["description"] or "")
+        except SuggestionError as e:
+            conn.execute(
+                "UPDATE tasks SET gpu_estimate_status = 'failed', gpu_estimate_error = ? "
+                "WHERE id = ? AND gpu_estimate_status = 'pending'",
+                (e.message, task_id),
+            )
+        except Exception:  # never leave the card stuck on "Estimating…"
+            conn.execute(
+                "UPDATE tasks SET gpu_estimate_status = 'failed', gpu_estimate_error = ? "
+                "WHERE id = ? AND gpu_estimate_status = 'pending'",
+                ("The GPU estimate failed unexpectedly. Ask AI again.", task_id),
+            )
+        else:
+            conn.execute(
+                """UPDATE tasks SET needs_gpu = ?, gpu_hours = ?, gpu_hours_source = 'ai',
+                       gpu_estimate_status = 'done', gpu_estimate_reason = ?, gpu_estimate_error = NULL
+                   WHERE id = ? AND gpu_estimate_status = 'pending'""",
+                (int(est["needed"]), est["hours"], est["reason"] or None, task_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def run_in_background(job):
+    threading.Thread(target=job, daemon=True).start()
+
+
+def create_app(db_path=None, suggester=None, gpu_detector=None, gpu_estimate_runner=None):
     app = Flask(__name__, static_folder=None)
     app.config["DB_PATH"] = str(db_path or os.environ.get("BOARD_DB_PATH") or DEFAULT_DB_PATH)
     # Tests pass a fake suggester; the real one calls the provider set by AI_PROVIDER.
     app.config["SUGGESTER"] = suggester or AiSuggester()
+    # Tests run GPU estimates inline; the server runs them on a background thread.
+    app.config["GPU_ESTIMATE_RUNNER"] = gpu_estimate_runner or run_in_background
     init_db(app.config["DB_PATH"])
 
     def db():
@@ -448,6 +531,23 @@ def create_app(db_path=None, suggester=None, gpu_detector=None):
             ).fetchone():
                 return jsonify(error="This task has a planned or running GPU booking. Cancel it first."), 409
             updates["needs_gpu"] = int(needs)
+            updates["gpu_hours_source"] = "user"
+
+        if "gpuHours" in body:
+            # A person sets or confirms the total GPU hours; null = "needs a GPU, time unknown".
+            raw = body["gpuHours"]
+            hours = None if raw is None else ai_suggest.gpu_hours_value(raw)
+            if raw is not None and hours is None:
+                return jsonify(
+                    error=f"GPU hours must be a number from {ai_suggest.MIN_GPU_HOURS:g} to {ai_suggest.MAX_GPU_HOURS}."
+                ), 400
+            updates.update(gpu_hours=hours, gpu_hours_source="user")
+            if updates.get("needs_gpu") != 0:
+                updates["needs_gpu"] = 1
+
+        if "needs_gpu" in updates and row["gpu_estimate_status"] == "pending":
+            # The person decided; a late AI answer must not overwrite it.
+            updates["gpu_estimate_status"] = None
 
         if "title" in body:
             title = body["title"]
@@ -533,7 +633,48 @@ def create_app(db_path=None, suggester=None, gpu_detector=None):
         except sqlite3.Error as e:
             conn.rollback()
             return jsonify(error=f"The task was not added: the database rejected it ({e}).", code="db_error"), 500
+        # Ask the AI about GPU use in the background; the card shows up right away.
+        if can_estimate():
+            start_gpu_estimate(conn, id_map["new"])
         return jsonify(board=build_board(conn), createdId=id_map["new"]), 201
+
+    # ---------- AI GPU estimate for one task (runs in the background) ----------
+
+    def can_estimate():
+        suggester = app.config["SUGGESTER"]
+        return hasattr(suggester, "estimate_gpu") and suggester.configured()
+
+    def start_gpu_estimate(conn, task_id):
+        conn.execute(
+            "UPDATE tasks SET gpu_estimate_status = 'pending', gpu_estimate_error = NULL WHERE id = ?",
+            (task_id,),
+        )
+        conn.commit()
+        app.config["GPU_ESTIMATE_RUNNER"](
+            lambda: run_gpu_estimate(app.config["DB_PATH"], app.config["SUGGESTER"], task_id)
+        )
+
+    @app.post("/api/tasks/<task_id>/gpu-estimate")
+    def request_gpu_estimate(task_id):
+        """Ask the AI again whether this task needs a GPU and for how long."""
+        conn = db()
+        row = conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            abort(404, description="Task not found.")
+        if row["status"] == "done":
+            return jsonify(error="This task is already completed.", code="task_done"), 409
+        if not hasattr(app.config["SUGGESTER"], "estimate_gpu"):
+            return jsonify(error="GPU estimates are not available.", code="unavailable"), 503
+        status = app.config["SUGGESTER"].status()
+        if not status.get("configured"):
+            key_env = status.get("keyEnv") or "the API key"
+            return (
+                jsonify(error=f"The AI assistant has no API key. Set {key_env} and restart the server.",
+                        code="missing_key"),
+                503,
+            )
+        start_gpu_estimate(conn, task_id)
+        return jsonify(build_board(conn)), 202
 
     # ---------- AI task suggestions (OpenRouter or Groq, see AI_PROVIDER) ----------
 

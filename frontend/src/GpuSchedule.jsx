@@ -13,13 +13,17 @@ import {
   ACTIVE_BOOKING,
   addMinutes,
   bookingKind,
+  bookingMinutesFor,
   bookingTitle,
   earliestSlot,
   findConflicts,
+  formatHours,
   formatRange,
+  isAiEstimate,
   KIND_LABEL,
   nextHalfHour,
   parseTime,
+  remainingHours,
   sameDay,
   startOfDay,
   toTimeString,
@@ -28,42 +32,100 @@ import {
 const POLL_MS = 5000;
 const DAY_MIN = 24 * 60;
 const DEFAULT_MINUTES = 120;
+const SNAP_MIN = 30;
+const DRAG_THRESHOLD_PX = 4;
 const OTHER = "__other__"; // booking that is not a board task (e.g. another lab's job)
+const DRAFT = "__draft__"; // the unsaved block of the booking form
 const HOUR_LABELS = Array.from({ length: 13 }, (_, i) => i * 2);
 const LEGEND = ["planned", "blocked", "running", "done", "external"];
 
 const minutesFrom = (day, s) => (parseTime(s).getTime() - day.getTime()) / 60000;
 const shiftDay = (day, n) => new Date(day.getFullYear(), day.getMonth(), day.getDate() + n);
 const pct = (m) => `${(m / DAY_MIN) * 100}%`;
+const hoursBetween = (s, e) => (parseTime(e) - parseTime(s)) / 3600000;
+const clock = (s) => s.slice(11, 16);
 
 function formatDay(day) {
   return day.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
 
-/** Tasks that need a GPU but have no planned or running booking. */
+/** Tasks that need a GPU and still have hours (or an unknown total) to book. */
 function unbookedTasks(tasks) {
-  return tasks.filter(
-    (t) => t.needsGpu && t.status !== "done" && !(t.gpuBooking && ACTIVE_BOOKING.has(t.gpuBooking.status)),
+  return tasks.filter((t) => {
+    if (!t.needsGpu || t.status === "done") return false;
+    if (t.gpuHours == null) return !(t.gpuBooking && ACTIVE_BOOKING.has(t.gpuBooking.status));
+    return remainingHours(t) > 0;
+  });
+}
+
+/** "6h left of 10h", "~6h (AI estimate)", "time unknown". */
+function needLabel(task) {
+  if (task.gpuHours == null) return "time unknown";
+  const ai = isAiEstimate(task) ? " (AI estimate)" : "";
+  if (task.bookedGpuHours > 0) return `${formatHours(remainingHours(task))} left of ${formatHours(task.gpuHours)}${ai}`;
+  return `${isAiEstimate(task) ? "~" : ""}${formatHours(task.gpuHours)}${ai}`;
+}
+
+/** What a block may do when dragged: move it, and/or stretch either edge. */
+function dragAbility(item) {
+  if (item.id === DRAFT || item.status === "planned") return { move: true, start: true, end: true };
+  if (item.status === "running") return { move: false, start: false, end: true };
+  return { move: false, start: false, end: false };
+}
+
+/** One block on a GPU row: a booking, or the draft of the booking form. */
+function Block({ item, day, kind, label, title, selected, dragging, conflict, onPointerDown, onClick }) {
+  const s = minutesFrom(day, item.startAt);
+  const e = minutesFrom(day, item.endAt);
+  if (!(e > 0 && s < DAY_MIN)) return null;
+  const left = Math.max(0, s);
+  const right = Math.min(DAY_MIN, e);
+  const can = dragAbility(item);
+  const className = [
+    "gpu-bar",
+    kind,
+    selected ? "selected" : "",
+    dragging ? "dragging" : "",
+    conflict ? "bad" : "",
+    can.move ? "movable" : "",
+  ].join(" ");
+  const handle = (edge) =>
+    can[edge] && (edge === "start" ? s >= 0 : e <= DAY_MIN) ? (
+      <span
+        className={`gpu-handle ${edge}`}
+        aria-hidden="true"
+        onPointerDown={(ev) => {
+          ev.stopPropagation();
+          onPointerDown(ev, item, edge);
+        }}
+      />
+    ) : null;
+  const body = (
+    <>
+      {handle("start")}
+      <span className="gpu-bar-label">{label}</span>
+      {handle("end")}
+    </>
+  );
+  const common = {
+    className,
+    style: { left: pct(left), width: `calc(${pct(right - left)} - 2px)` },
+    title,
+    onPointerDown: (ev) => can.move && onPointerDown(ev, item, "move"),
+  };
+  if (item.id === DRAFT) return <div {...common}>{body}</div>;
+  return (
+    <button type="button" {...common} data-booking-id={item.id} onClick={() => onClick(item.id)}>
+      {body}
+    </button>
   );
 }
 
-function GpuRow({ gpu, day, bookings, selectedId, draft, now, onPickTime, onSelect }) {
+function GpuRow({ gpu, day, blocks, now, onPickTime, renderBlock }) {
   const trackRef = useRef(null);
-  const dayEnd = DAY_MIN;
-  const visible = bookings.filter((b) => {
-    const s = minutesFrom(day, b.startAt);
-    const e = minutesFrom(day, b.endAt);
-    return e > 0 && s < dayEnd;
-  });
   const [host, short] = gpu.name.includes(" / ")
     ? [gpu.name.slice(0, gpu.name.lastIndexOf(" / ")), gpu.name.split(" / ").pop()]
     : [null, gpu.name];
-
-  const bar = (startAt, endAt) => {
-    const s = Math.max(0, minutesFrom(day, startAt));
-    const e = Math.min(dayEnd, minutesFrom(day, endAt));
-    return { left: pct(s), width: `calc(${pct(e - s)} - 2px)` };
-  };
 
   return (
     <>
@@ -79,6 +141,7 @@ function GpuRow({ gpu, day, bookings, selectedId, draft, now, onPickTime, onSele
         ref={trackRef}
         className={`gpu-track ${gpu.active ? "" : "inactive"}`}
         data-gpu-id={gpu.id}
+        data-active={gpu.active ? "1" : "0"}
         title={gpu.active ? "Click an empty spot to book from that hour" : "Deactivated: no new bookings"}
         onClick={(e) => {
           if (!gpu.active || e.target !== trackRef.current) return;
@@ -87,28 +150,7 @@ function GpuRow({ gpu, day, bookings, selectedId, draft, now, onPickTime, onSele
           onPickTime(gpu.id, addMinutes(day, hour * 60));
         }}
       >
-        {visible.map((b) => {
-          const kind = bookingKind(b);
-          return (
-            <button
-              key={b.id}
-              type="button"
-              className={`gpu-bar ${kind} ${selectedId === b.id ? "selected" : ""}`}
-              style={bar(b.startAt, b.endAt)}
-              title={`${bookingTitle(b)} · ${formatRange(b.startAt, b.endAt)} · ${KIND_LABEL[kind]}`}
-              data-booking-id={b.id}
-              onClick={() => onSelect(b.id)}
-            >
-              {bookingTitle(b)}
-            </button>
-          );
-        })}
-        {draft && draft.gpuId === gpu.id && draft.startAt < draft.endAt &&
-          minutesFrom(day, draft.endAt) > 0 && minutesFrom(day, draft.startAt) < dayEnd && (
-            <span className={`gpu-bar draft ${draft.conflict ? "bad" : ""}`} style={bar(draft.startAt, draft.endAt)}>
-              New booking
-            </span>
-          )}
+        {blocks.map(renderBlock)}
         {sameDay(day, now) && (
           <span className="gpu-now" style={{ left: pct(minutesFrom(day, toTimeString(now))) }} aria-hidden="true" />
         )}
@@ -117,12 +159,34 @@ function GpuRow({ gpu, day, bookings, selectedId, draft, now, onPickTime, onSele
   );
 }
 
+/** "This booking 6h · booked 8h of 30h (AI estimate)". */
+function TaskProgress({ task, startAt, endAt, excludeHours = 0 }) {
+  if (!task) return null;
+  const valid = startAt && endAt && startAt < endAt;
+  const thisOne = valid ? hoursBetween(startAt, endAt) : 0;
+  const booked = Math.max(0, (task.bookedGpuHours || 0) - excludeHours);
+  if (task.gpuHours == null) {
+    return (
+      <p className="muted">
+        This booking {formatHours(thisOne)}. The task's total GPU time is unknown
+        {booked > 0 ? `; ${formatHours(booked)} booked already` : ""}.
+      </p>
+    );
+  }
+  const after = booked + thisOne;
+  return (
+    <p className={`muted ${after > task.gpuHours ? "gpu-over" : ""}`}>
+      This booking {formatHours(thisOne)} · {formatHours(after)} of {formatHours(task.gpuHours)} booked with it
+      {isAiEstimate(task) ? " (AI estimate)" : ""}
+      {after > task.gpuHours ? " · more than the task needs" : ""}
+    </p>
+  );
+}
+
 function BookingForm({ form, setForm, schedule, tasks, onSubmit, onCancel, busy, error }) {
   const activeGpus = schedule.gpus.filter((g) => g.active);
   const need = unbookedTasks(tasks);
-  const others = tasks.filter(
-    (t) => t.status !== "done" && !need.includes(t) && !(t.gpuBooking && ACTIVE_BOOKING.has(t.gpuBooking.status)),
-  );
+  const others = tasks.filter((t) => t.status !== "done" && !need.includes(t));
   const task = tasks.find((t) => t.id === form.taskId);
   const validTimes = form.startAt && form.endAt && form.startAt < form.endAt;
   const conflicts = validTimes ? findConflicts(schedule.bookings, form.gpuId, form.startAt, form.endAt) : [];
@@ -143,6 +207,7 @@ function BookingForm({ form, setForm, schedule, tasks, onSubmit, onCancel, busy,
       }}
     >
       <h3>New booking</h3>
+      <p className="muted">Drag the green block to move it, across GPUs too, or drag its edges to change the length.</p>
       <div className="gpu-form">
         <label htmlFor="gpu-form-task">Task</label>
         <select id="gpu-form-task" value={form.taskId} onChange={(e) => set({ taskId: e.target.value })}>
@@ -150,7 +215,9 @@ function BookingForm({ form, setForm, schedule, tasks, onSubmit, onCancel, busy,
           {need.length > 0 && (
             <optgroup label="Needs a GPU">
               {need.map((t) => (
-                <option key={t.id} value={t.id}>{t.title}</option>
+                <option key={t.id} value={t.id}>
+                  {t.title} · {needLabel(t)}
+                </option>
               ))}
             </optgroup>
           )}
@@ -191,8 +258,7 @@ function BookingForm({ form, setForm, schedule, tasks, onSubmit, onCancel, busy,
             // Keep the duration when the start moves.
             const start = e.target.value;
             if (!start) return set({ startAt: "" });
-            const end = toTimeString(addMinutes(parseTime(start), minutes));
-            set({ startAt: start, endAt: end });
+            set({ startAt: start, endAt: toTimeString(addMinutes(parseTime(start), minutes)) });
           }}
         />
         <label htmlFor="gpu-form-end">To</label>
@@ -205,15 +271,12 @@ function BookingForm({ form, setForm, schedule, tasks, onSubmit, onCancel, busy,
         />
       </div>
 
+      {form.taskId !== OTHER && <TaskProgress task={task} startAt={form.startAt} endAt={form.endAt} />}
       {!validTimes ? (
         <p className="gpu-check bad">The end time must be after the start time.</p>
       ) : conflicts.length > 0 ? (
         <p className="gpu-check bad">
-          Overlaps{" "}
-          {conflicts
-            .map((c) => `${bookingTitle(c)} (${formatRange(c.startAt, c.endAt)})`)
-            .join(", ")}
-          .
+          Overlaps {conflicts.map((c) => `${bookingTitle(c)} (${formatRange(c.startAt, c.endAt)})`).join(", ")}.
         </p>
       ) : (
         <p className="gpu-check ok">This time is free.</p>
@@ -242,16 +305,27 @@ function BookingForm({ form, setForm, schedule, tasks, onSubmit, onCancel, busy,
   );
 }
 
-function BookingDetail({ booking, onAction, onShowTask, busy, error }) {
+/** Details of one booking, with fields to change its time (the keyboard alternative to dragging). */
+function BookingDetail({ booking, schedule, task, onAction, onSave, onShowTask, busy, error }) {
   const kind = bookingKind(booking);
+  const can = dragAbility(booking);
+  const [gpuId, setGpuId] = useState(booking.gpuId);
+  const [startAt, setStartAt] = useState(booking.startAt);
+  const [endAt, setEndAt] = useState(booking.endAt);
+
+  useEffect(() => {
+    setGpuId(booking.gpuId);
+    setStartAt(booking.startAt);
+    setEndAt(booking.endAt);
+  }, [booking.id, booking.gpuId, booking.startAt, booking.endAt]);
+
+  const changed = gpuId !== booking.gpuId || startAt !== booking.startAt || endAt !== booking.endAt;
+  const activeGpus = schedule.gpus.filter((g) => g.active || g.id === booking.gpuId);
+
   return (
     <div className="gpu-box">
       <h3>{bookingTitle(booking)}</h3>
       <dl className="gpu-dl">
-        <dt>GPU</dt>
-        <dd>{booking.gpuName}</dd>
-        <dt>Time</dt>
-        <dd>{formatRange(booking.startAt, booking.endAt)}</dd>
         <dt>Owner</dt>
         <dd>{booking.taskId ? booking.assigneeName || "Unassigned (Task Pool)" : "Not a board task"}</dd>
         <dt>Status</dt>
@@ -260,11 +334,76 @@ function BookingDetail({ booking, onAction, onShowTask, busy, error }) {
           {KIND_LABEL[kind]}
         </dd>
       </dl>
+      {can.end ? (
+        <div className="gpu-form">
+          <label htmlFor="gpu-detail-gpu">GPU</label>
+          {can.move ? (
+            <select id="gpu-detail-gpu" value={gpuId} onChange={(e) => setGpuId(e.target.value)}>
+              {activeGpus.map((g) => (
+                <option key={g.id} value={g.id}>{g.name}</option>
+              ))}
+            </select>
+          ) : (
+            <span id="gpu-detail-gpu">{booking.gpuName}</span>
+          )}
+          <label htmlFor="gpu-detail-start">From</label>
+          {can.start ? (
+            <input
+              id="gpu-detail-start"
+              type="datetime-local"
+              step={1800}
+              value={startAt}
+              onChange={(e) => setStartAt(e.target.value)}
+            />
+          ) : (
+            <span id="gpu-detail-start">{formatRange(booking.startAt, booking.startAt).split("–")[0]}</span>
+          )}
+          <label htmlFor="gpu-detail-end">To</label>
+          <input
+            id="gpu-detail-end"
+            type="datetime-local"
+            step={1800}
+            value={endAt}
+            onChange={(e) => setEndAt(e.target.value)}
+          />
+        </div>
+      ) : (
+        <dl className="gpu-dl">
+          <dt>GPU</dt>
+          <dd>{booking.gpuName}</dd>
+          <dt>Time</dt>
+          <dd>{formatRange(booking.startAt, booking.endAt)}</dd>
+        </dl>
+      )}
+      {task && (
+        <TaskProgress
+          task={task}
+          startAt={startAt}
+          endAt={endAt}
+          excludeHours={hoursBetween(booking.startAt, booking.endAt)}
+        />
+      )}
       {kind === "blocked" && (
         <p className="msg-warning">The job can start once all prerequisites of this task are completed.</p>
       )}
       {error && <p className="msg-error-inline" role="alert">{error}</p>}
       <div className="gpu-actions">
+        {changed && (
+          <button
+            type="button"
+            className="btn primary"
+            disabled={busy}
+            onClick={() => {
+              const changes = {};
+              if (gpuId !== booking.gpuId) changes.gpuId = gpuId;
+              if (startAt !== booking.startAt) changes.startAt = startAt;
+              if (endAt !== booking.endAt) changes.endAt = endAt;
+              onSave(changes);
+            }}
+          >
+            Save time
+          </button>
+        )}
         {booking.status === "planned" && (
           <button type="button" className="btn" disabled={busy} onClick={() => onAction("start")}>
             Start job
@@ -474,7 +613,11 @@ function ManageGpus({ schedule, onApply, onClose }) {
   );
 }
 
-/** GPU schedule tab: one timeline row per GPU for a day, plus booking and GPU management. */
+/**
+ * GPU schedule tab: one timeline row per GPU for a day. Blocks can be dragged
+ * to another time or GPU and stretched at either edge; the booking form's draft
+ * block works the same way and is only saved by "Book".
+ */
 export default function GpuSchedule({ board, focus, onBoard, onShowTask }) {
   const [schedule, setSchedule] = useState(null);
   const [loadError, setLoadError] = useState("");
@@ -486,6 +629,10 @@ export default function GpuSchedule({ board, focus, onBoard, onShowTask }) {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
+  // Block being dragged: { id, gpuId, startAt, endAt } (id is DRAFT for the form's block).
+  const [drag, setDrag] = useState(null);
+  const dragRef = useRef(null); // pointer session; also pauses polling
+  const suppressClick = useRef(false);
   const handledFocus = useRef(null);
 
   const load = useCallback(async () => {
@@ -500,7 +647,8 @@ export default function GpuSchedule({ board, focus, onBoard, onShowTask }) {
   useEffect(() => {
     load();
     const timer = setInterval(() => {
-      if (document.visibilityState === "visible") load();
+      // A poll in the middle of a drag would snap the block back.
+      if (document.visibilityState === "visible" && !dragRef.current) load();
       setNow(new Date());
     }, POLL_MS);
     return () => clearInterval(timer);
@@ -514,17 +662,32 @@ export default function GpuSchedule({ board, focus, onBoard, onShowTask }) {
     [onBoard],
   );
 
+  const tasksById = new Map(board.tasks.map((t) => [t.id, t]));
   const activeGpuIds = schedule ? schedule.gpus.filter((g) => g.active).map((g) => g.id) : [];
 
   const openForm = useCallback(
     (taskId, gpuId, start) => {
       if (!schedule) return;
       const ids = schedule.gpus.filter((g) => g.active).map((g) => g.id);
+      const task = board.tasks.find((t) => t.id === taskId);
+      const minutes = bookingMinutesFor(task, DEFAULT_MINUTES);
       let slot;
       if (gpuId) {
-        slot = { gpuId, startAt: toTimeString(start), endAt: toTimeString(addMinutes(start, DEFAULT_MINUTES)) };
+        slot = { gpuId, startAt: toTimeString(start), endAt: toTimeString(addMinutes(start, minutes)) };
       } else {
-        slot = earliestSlot(schedule.bookings, ids, ids[0], nextHalfHour(), DEFAULT_MINUTES);
+        // Continue after the task's last planned or running booking (on its GPU if
+        // possible), so the timeline opens on that day instead of today.
+        const own = schedule.bookings
+          .filter((b) => b.taskId && b.taskId === taskId && ACTIVE_BOOKING.has(b.status))
+          .sort((a, b) => (a.endAt < b.endAt ? 1 : -1));
+        let from = nextHalfHour();
+        let preferred = ids[0];
+        if (own.length > 0) {
+          const lastEnd = parseTime(own[0].endAt);
+          if (lastEnd > from) from = lastEnd;
+          if (ids.includes(own[0].gpuId)) preferred = own[0].gpuId;
+        }
+        slot = earliestSlot(schedule.bookings, ids, preferred, from, minutes);
       }
       if (!slot) return;
       setForm({ taskId: taskId ?? "", label: "", ...slot });
@@ -533,10 +696,10 @@ export default function GpuSchedule({ board, focus, onBoard, onShowTask }) {
       setActionError("");
       setNotice("");
     },
-    [schedule],
+    [schedule, board.tasks],
   );
 
-  // Opened from a task: show its booking, or start booking for it.
+  // Opened from a task: show its booking, or put a draft block for it on the timeline.
   useEffect(() => {
     if (!focus || !schedule || handledFocus.current === focus.nonce) return;
     handledFocus.current = focus.nonce;
@@ -561,12 +724,183 @@ export default function GpuSchedule({ board, focus, onBoard, onShowTask }) {
   }
 
   const selected = schedule.bookings.find((b) => b.id === selectedId);
-  const draft =
-    form && form.startAt && form.endAt
-      ? { ...form, conflict: findConflicts(schedule.bookings, form.gpuId, form.startAt, form.endAt).length > 0 }
-      : null;
   const need = unbookedTasks(board.tasks);
   const isToday = sameDay(day, now);
+
+  // ---------- dragging blocks ----------
+
+  const saveBookingTime = async (id, changes) => {
+    setBusy(true);
+    setActionError("");
+    setNotice("");
+    try {
+      apply(await updateBooking(id, changes));
+      setSelectedId(id);
+      setNotice("Booking updated.");
+      return true;
+    } catch (err) {
+      setSelectedId(id);
+      setActionError(err.message);
+      load();
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const beginDrag = (e, item, mode) => {
+    if (e.button !== 0 || busy) return;
+    const track = e.currentTarget.closest(".gpu-track");
+    if (!track) return;
+    e.preventDefault();
+    const session = {
+      item,
+      mode,
+      x0: e.clientX,
+      y0: e.clientY,
+      moved: false,
+      pxPerMin: track.getBoundingClientRect().width / DAY_MIN,
+      origS: parseTime(item.startAt),
+      origE: parseTime(item.endAt),
+      dayStart: day,
+      dayEnd: addMinutes(day, DAY_MIN),
+      current: null,
+    };
+    dragRef.current = session;
+
+    const onMove = (ev) => {
+      const dx = ev.clientX - session.x0;
+      if (!session.moved && Math.abs(dx) < DRAG_THRESHOLD_PX && Math.abs(ev.clientY - session.y0) < DRAG_THRESHOLD_PX) {
+        return;
+      }
+      session.moved = true;
+      const delta = Math.round(dx / session.pxPerMin / SNAP_MIN) * SNAP_MIN;
+      const { origS, origE, dayStart, dayEnd } = session;
+      let start = origS;
+      let end = origE;
+      let gpuId = item.gpuId;
+      if (mode === "move") {
+        let shift = delta;
+        // Keep a block that was fully visible inside the day it is shown on.
+        if (origS >= dayStart) shift = Math.max(shift, (dayStart - origS) / 60000);
+        if (origE <= dayEnd) shift = Math.min(shift, (dayEnd - origE) / 60000);
+        start = addMinutes(origS, shift);
+        end = addMinutes(origE, shift);
+        const over = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.(".gpu-track");
+        if (over && over.dataset.active === "1") gpuId = over.dataset.gpuId;
+      } else if (mode === "start") {
+        start = addMinutes(origS, delta);
+        if (origS >= dayStart && start < dayStart) start = dayStart;
+        if (start > addMinutes(origE, -SNAP_MIN)) start = addMinutes(origE, -SNAP_MIN);
+      } else {
+        end = addMinutes(origE, delta);
+        if (origE <= dayEnd && end > dayEnd) end = dayEnd;
+        if (end < addMinutes(origS, SNAP_MIN)) end = addMinutes(origS, SNAP_MIN);
+      }
+      session.current = { id: item.id, gpuId, startAt: toTimeString(start), endAt: toTimeString(end) };
+      setDrag(session.current);
+    };
+
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      dragRef.current = null;
+      const result = session.current;
+      if (!session.moved || !result) {
+        setDrag(null);
+        return;
+      }
+      suppressClick.current = true; // the click that follows a drag is not a click
+      setTimeout(() => {
+        suppressClick.current = false;
+      }, 0);
+      if (item.id === DRAFT) {
+        setForm((f) => (f ? { ...f, gpuId: result.gpuId, startAt: result.startAt, endAt: result.endAt } : f));
+        setDrag(null);
+        return;
+      }
+      const changes = {};
+      if (result.gpuId !== item.gpuId) changes.gpuId = result.gpuId;
+      if (result.startAt !== item.startAt) changes.startAt = result.startAt;
+      if (result.endAt !== item.endAt) changes.endAt = result.endAt;
+      if (Object.keys(changes).length === 0) {
+        setDrag(null);
+        return;
+      }
+      // Keep showing the new position until the server answers; a 409 snaps it back.
+      saveBookingTime(item.id, changes).finally(() => setDrag(null));
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  };
+
+  // Every block with its shown position (a dragged one follows the pointer).
+  const blocks = schedule.bookings.map((b) => (drag && drag.id === b.id ? { ...b, ...drag } : b));
+  if (form && form.startAt && form.endAt && form.startAt < form.endAt) {
+    const draft = { id: DRAFT, status: "draft", gpuId: form.gpuId, startAt: form.startAt, endAt: form.endAt };
+    blocks.push(drag && drag.id === DRAFT ? { ...draft, ...drag } : draft);
+  }
+  const conflictOf = (item) =>
+    findConflicts(schedule.bookings, item.gpuId, item.startAt, item.endAt, item.id === DRAFT ? null : item.id);
+
+  const renderBlock = (item) => {
+    const isDraft = item.id === DRAFT;
+    const dragging = drag?.id === item.id;
+    const conflicts = isDraft || dragging ? conflictOf(item) : [];
+    const kind = isDraft ? "draft" : bookingKind(item);
+    const hours = formatHours(hoursBetween(item.startAt, item.endAt));
+    const label = dragging
+      ? `${clock(item.startAt)}–${clock(item.endAt)} · ${hours}`
+      : isDraft
+        ? `New booking · ${hours}`
+        : bookingTitle(item);
+    return (
+      <Block
+        key={item.id}
+        item={item}
+        day={day}
+        kind={kind}
+        label={label}
+        title={
+          isDraft
+            ? "New booking (not saved yet). Drag to move, drag an edge to change the length."
+            : `${bookingTitle(item)} · ${formatRange(item.startAt, item.endAt)} · ${KIND_LABEL[kind]}`
+        }
+        selected={selectedId === item.id}
+        dragging={dragging}
+        conflict={conflicts.length > 0}
+        onPointerDown={beginDrag}
+        onClick={(id) => {
+          if (suppressClick.current) return;
+          setSelectedId(id);
+          setForm(null);
+          setActionError("");
+          setNotice("");
+        }}
+      />
+    );
+  };
+
+  const dragInfo = (() => {
+    if (!drag) return null;
+    const item = blocks.find((b) => b.id === drag.id);
+    if (!item) return null;
+    const gpu = schedule.gpus.find((g) => g.id === drag.gpuId);
+    const conflicts = conflictOf(item);
+    const task = tasksById.get(item.id === DRAFT ? form?.taskId : item.taskId);
+    return (
+      <div className={`gpu-drag-info ${conflicts.length ? "bad" : ""}`} role="status">
+        {gpu?.name} · {formatRange(drag.startAt, drag.endAt)} · {formatHours(hoursBetween(drag.startAt, drag.endAt))}
+        {conflicts.length > 0 && ` · overlaps ${conflicts.map(bookingTitle).join(", ")}`}
+        {task?.gpuHours != null && ` · task needs ${formatHours(task.gpuHours)}`}
+      </div>
+    );
+  })();
+
+  // ---------- form and actions ----------
 
   const submit = async () => {
     if (!form.taskId) return setActionError("Choose a task, or pick “Not a board task”.");
@@ -619,7 +953,8 @@ export default function GpuSchedule({ board, focus, onBoard, onShowTask }) {
       <div className="panel-head">
         <h2>GPU schedule</h2>
         <span className="hint">
-          Click an empty spot on a GPU to book it from that hour. Bookings on the same GPU can't overlap.
+          Click an empty spot to book from that hour. Drag a block to move it (across GPUs too) and drag its edges to
+          change the length. Bookings on the same GPU can't overlap.
         </span>
       </div>
       <div className="gpu-body">
@@ -647,7 +982,7 @@ export default function GpuSchedule({ board, focus, onBoard, onShowTask }) {
         </div>
 
         <div className="gpu-scroll">
-          <div className="gpu-grid">
+          <div className={`gpu-grid ${drag ? "is-dragging" : ""}`}>
             <div />
             <div className="gpu-hours" aria-hidden="true">
               {HOUR_LABELS.map((h) => (
@@ -661,24 +996,19 @@ export default function GpuSchedule({ board, focus, onBoard, onShowTask }) {
                 key={g.id}
                 gpu={g}
                 day={day}
-                bookings={schedule.bookings.filter((b) => b.gpuId === g.id)}
-                selectedId={selectedId}
-                draft={draft}
+                blocks={blocks.filter((b) => b.gpuId === g.id)}
                 now={now}
+                renderBlock={renderBlock}
                 onPickTime={(gpuId, start) => {
+                  if (suppressClick.current) return;
                   const keep = form?.taskId ?? need[0]?.id ?? "";
                   openForm(keep, gpuId, start);
-                }}
-                onSelect={(id) => {
-                  setSelectedId(id);
-                  setForm(null);
-                  setActionError("");
-                  setNotice("");
                 }}
               />
             ))}
           </div>
         </div>
+        {dragInfo}
 
         <div className="gpu-legend">
           {LEGEND.map((k) => (
@@ -687,6 +1017,10 @@ export default function GpuSchedule({ board, focus, onBoard, onShowTask }) {
               {KIND_LABEL[k]}
             </span>
           ))}
+          <span>
+            <span className="gpu-swatch draft" aria-hidden="true" />
+            New booking (not saved)
+          </span>
           <span>
             <span className="gpu-swatch now" aria-hidden="true" />
             Now
@@ -712,12 +1046,21 @@ export default function GpuSchedule({ board, focus, onBoard, onShowTask }) {
               error={actionError}
             />
           ) : selected ? (
-            <BookingDetail booking={selected} onAction={act} onShowTask={onShowTask} busy={busy} error={actionError} />
+            <BookingDetail
+              booking={selected}
+              schedule={schedule}
+              task={selected.taskId ? tasksById.get(selected.taskId) : null}
+              onAction={act}
+              onSave={(changes) => saveBookingTime(selected.id, changes)}
+              onShowTask={onShowTask}
+              busy={busy}
+              error={actionError}
+            />
           ) : (
             <div className="gpu-box">
               <h3>Booking</h3>
               <p className="muted">
-                Select a booking to see its details, or click an empty spot on a GPU to book it.
+                Select a booking to see or change it, or click an empty spot on a GPU to book it.
               </p>
               {activeGpuIds.length > 0 && (
                 <div className="gpu-actions">
@@ -744,10 +1087,12 @@ export default function GpuSchedule({ board, focus, onBoard, onShowTask }) {
                   <li key={t.id}>
                     <span>
                       <span className="related-title">{t.title}</span>
-                      <span className="muted"> · {board.members.find((m) => m.id === t.assigneeId)?.name || "Task Pool"}</span>
+                      <span className="muted">
+                        {" "}· {board.members.find((m) => m.id === t.assigneeId)?.name || "Task Pool"} · {needLabel(t)}
+                      </span>
                     </span>
                     <button type="button" className="btn" onClick={() => openForm(t.id)}>
-                      Book
+                      Schedule
                     </button>
                   </li>
                 ))}

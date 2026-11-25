@@ -68,11 +68,24 @@ MAX_DESCRIPTION = 500
 MAX_INPUT = 2000          # characters of work description accepted from the user
 MAX_CONTEXT_TASKS = 50    # existing board tasks sent to the model as context
 TIMEOUT_SECONDS = 60
+MIN_GPU_HOURS = 0.5
+MAX_GPU_HOURS = 336       # 14 days, the longest single GPU booking
+MAX_GPU_REASON = 200
 
-SYSTEM_PROMPT = """You split a research team's upcoming work into tasks for a shared coordination board.
+# Shared by both prompts so the batch and the single-task estimate judge alike.
+GPU_RULES = """- "gpu": whether the task itself needs GPU compute, and roughly for how long.
+  - "needed": true only for compute-heavy work such as training or fine-tuning a model,
+    GPU simulation or large-scale data collection, batch inference or evaluating models,
+    or rendering. Planning, writing, reviewing, meetings, and small data cleaning are false.
+  - "hours": estimated total GPU hours for the whole task, a number from 0.5 to 336.
+    Use null when "needed" is false.
+  - "reason": one short phrase explaining the estimate."""
+
+SYSTEM_PROMPT = f"""You split a research team's upcoming work into tasks for a shared coordination board.
 
 Reply with JSON only: no prose, no Markdown, no code fences. Use exactly this shape:
-{"tasks": [{"id": "T1", "title": "...", "description": "...", "prerequisites": ["..."]}]}
+{{"tasks": [{{"id": "T1", "title": "...", "description": "...", "prerequisites": ["..."],
+  "gpu": {{"needed": true, "hours": 6, "reason": "..."}}}}]}}
 
 Rules:
 - Return 1 to 8 tasks.
@@ -82,7 +95,17 @@ Rules:
 - "prerequisites": ids of tasks that must be completed first. Use ids from this reply,
   or the exact id of an existing board task from the list the user gives. Use [] if none.
 - Never create circular dependencies.
-- Write titles and descriptions in the same language as the user's work description."""
+{GPU_RULES}
+- Write titles, descriptions, and reasons in the same language as the user's work description."""
+
+GPU_ESTIMATE_PROMPT = f"""You estimate whether one task on a research team's coordination board needs GPU compute.
+
+Reply with JSON only: no prose, no Markdown, no code fences. Use exactly this shape:
+{{"gpu": {{"needed": true, "hours": 6, "reason": "..."}}}}
+
+Rules:
+{GPU_RULES}
+- Write the reason in the same language as the task."""
 
 
 class SuggestionError(Exception):
@@ -115,6 +138,11 @@ def build_messages(description, existing_tasks):
         f"{description}"
     )
     return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}]
+
+
+def build_gpu_messages(title, description):
+    user = f"Task title: {title}\nTask description: {description or '(none)'}"
+    return [{"role": "system", "content": GPU_ESTIMATE_PROMPT}, {"role": "user", "content": user}]
 
 
 # ---------- OpenRouter call ----------
@@ -250,6 +278,50 @@ def _extract_json(content):
     raise _bad_format("it is not valid JSON")
 
 
+def _to_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in ("true", "yes"):
+        return True
+    if isinstance(value, str) and value.strip().lower() in ("false", "no"):
+        return False
+    return None
+
+
+def gpu_hours_value(value):
+    """Hours as a number on a half-hour grid within the booking limits, or None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        try:
+            value = float(value.strip())
+        except ValueError:
+            return None
+    if not isinstance(value, (int, float)) or value != value:  # NaN
+        return None
+    if not MIN_GPU_HOURS <= value <= MAX_GPU_HOURS:
+        return None
+    return max(MIN_GPU_HOURS, round(value * 2) / 2)
+
+
+def normalize_gpu(value):
+    """A clean {"needed", "hours", "reason", "source"} or None when unusable.
+
+    Lenient on purpose: a bad GPU field never rejects the whole batch. Hours
+    outside 0.5-336 become None ("needs a GPU, time unknown").
+    """
+    if not isinstance(value, dict):
+        return None
+    needed = _to_bool(value.get("needed"))
+    if needed is None:
+        return None
+    reason = value.get("reason")
+    reason = " ".join(reason.split())[:MAX_GPU_REASON] if isinstance(reason, str) else ""
+    source = value.get("source") if value.get("source") in ("ai", "user") else "ai"
+    hours = gpu_hours_value(value.get("hours")) if needed else None
+    return {"needed": needed, "hours": hours, "reason": reason, "source": source}
+
+
 def normalize_tasks(items, error=_bad_format):
     """Check the shape of a candidate batch and return clean dicts.
 
@@ -292,14 +364,16 @@ def normalize_tasks(items, error=_bad_format):
                 raise error(f'task "{tid}" has a prerequisite that is not an id')
             if p.strip() not in ids:
                 ids.append(p.strip())
-        clean.append(
-            {
-                "id": tid,
-                "title": " ".join(title.split())[:MAX_TITLE],
-                "description": " ".join(description.split())[:MAX_DESCRIPTION],
-                "prerequisites": ids,
-            }
-        )
+        task = {
+            "id": tid,
+            "title": " ".join(title.split())[:MAX_TITLE],
+            "description": " ".join(description.split())[:MAX_DESCRIPTION],
+            "prerequisites": ids,
+        }
+        gpu = normalize_gpu(item.get("gpu"))
+        if gpu is not None:  # missing or unusable: the task simply has no estimate
+            task["gpu"] = gpu
+        clean.append(task)
     return clean
 
 
@@ -310,6 +384,16 @@ def parse_suggestions(content):
     if not isinstance(data, dict) or "tasks" not in data:
         raise _bad_format('the "tasks" list is missing')
     return normalize_tasks(data["tasks"])
+
+
+def parse_gpu_estimate(content):
+    data = _extract_json(content)
+    if isinstance(data, dict) and isinstance(data.get("gpu"), dict):
+        data = data["gpu"]  # tolerate the bare object without the "gpu" wrapper too
+    gpu = normalize_gpu(data)
+    if gpu is None:
+        raise _bad_format('"gpu.needed" must be true or false')
+    return {**gpu, "source": "ai"}
 
 
 def find_cycle(prereqs):
@@ -413,7 +497,7 @@ class AiSuggester:
     def configured(self):
         return self.status()["configured"]
 
-    def suggest(self, description, existing_tasks):
+    def _provider_and_key(self):
         provider, problem = resolve_provider(self._environ)
         if problem:
             raise SuggestionError("invalid_provider", problem, 503)
@@ -426,5 +510,15 @@ class AiSuggester:
                 "starts Flask, then restart the server.",
                 503,
             )
+        return provider, key
+
+    def suggest(self, description, existing_tasks):
+        provider, key = self._provider_and_key()
         content = call_chat(provider, build_messages(description, existing_tasks), key, urlopen=self._urlopen)
         return parse_suggestions(content)
+
+    def estimate_gpu(self, title, description):
+        """{"needed", "hours", "reason", "source": "ai"} for one task."""
+        provider, key = self._provider_and_key()
+        content = call_chat(provider, build_gpu_messages(title, description), key, urlopen=self._urlopen)
+        return parse_gpu_estimate(content)
